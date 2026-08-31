@@ -150,25 +150,27 @@ test("a genuine later encounter can damage again", () => {
   assert.equal(balloon.health, 1);
 });
 
-test("nails break at zero and broken nails deal no damage", () => {
+test("nails are automatically removed at zero durability", () => {
   const room = armedContactRoom("break", 1);
   const breaker = createBasicBalloon(room.id, "breaker", 2);
   room.balloons.push(breaker);
   updateRoomSimulation(room, 1);
-  assert.equal(room.nailStrips[0].status, "broken");
-  assert.equal(room.nailStrips[0].durability, 0);
+  assert.equal(room.nailStrips.length, 0);
   const next = createBasicBalloon(room.id, "next", 2);
   room.balloons.push(next);
   updateRoomSimulation(room, 1);
   assert.equal(next.health, BASIC_BALLOON_HP);
 });
 
-test("breaking nails leaves the wall intact", () => {
+test("exhausted nails leave the wall intact and free inventory", () => {
   const room = armedContactRoom("wall-after-break", 1);
+  const armedWallId = room.walls[0].id;
   room.balloons.push(createBasicBalloon(room.id, "breaker", 2));
   updateRoomSimulation(room, 1);
   assert.equal(room.walls.length, 1);
-  assert.equal(room.nailStrips[0].status, "broken");
+  assert.equal(room.nailStrips.length, 0);
+  assert.equal(placeNailStrip(room, armedWallId).valid, true);
+  assert.equal(room.nailStrips[0].durability, NAIL_MAX_DURABILITY);
 });
 
 test("nail removal preserves the wall and repositioning restores durability", () => {

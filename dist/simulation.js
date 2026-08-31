@@ -1,6 +1,6 @@
 import { BASIC_BALLOON, DEV_SPAWN_MAX_SECONDS, DEV_SPAWN_MIN_SECONDS, MANUAL_POP_DAMAGE, NAIL_DAMAGE, ROOM_MAX_HEALTH } from "./constants.js";
 import { getCellCenter, getLaneCell, isTraversalBlocked, SPAWN_LANES } from "./grid.js";
-import { getNailsTouchingCell } from "./nails.js";
+import { getNailsTouchingCell, removeNailStrip } from "./nails.js";
 import { findPathToCeiling } from "./pathfinding.js";
 export function createBalloonRoom(id) {
     return { id, health: ROOM_MAX_HEALTH, maxHealth: ROOM_MAX_HEALTH, balloons: [], walls: [], nailStrips: [], wallRevision: 0, width: 1, height: 1 };
@@ -68,8 +68,10 @@ export function updateBalloonPosition(room, balloon, deltaSeconds) {
             if (!result)
                 continue;
             nail.durability = Math.max(0, nail.durability - 1);
-            if (nail.durability === 0)
+            if (nail.durability === 0) {
                 nail.status = "broken";
+                removeNailStrip(room, nail.wallSegmentId);
+            }
             events.push({ type: "nail_contact", balloonId: balloon.id, nailStripId: nail.id, wallSegmentId: nail.wallSegmentId, balloonHealthBefore, balloonHealthAfter: result.remainingHealth, durabilityBefore, durabilityAfter: nail.durability, popped: result.popped });
             if (result.popped)
                 return events;
