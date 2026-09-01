@@ -5,12 +5,15 @@ import type { BalloonRoom, GameAction, GameActionResult } from "./types.js";
 import { placeWall, removeWall, validateWallPlacement } from "./walls.js";
 import { validateNailPlacement } from "./nails.js";
 import { applyIncomeTicks } from "./economy.js";
-import { BASIC_BALLOON_COST, BASIC_BALLOON_INCOME_GAIN, HORIZONTAL_WALL_COST, NAIL_STRIP_COST, VERTICAL_WALL_COST } from "./constants.js";
+import { BASIC_BALLOON_COST, BASIC_BALLOON_INCOME_GAIN, ENTRY_LANES, HORIZONTAL_WALL_COST, NAIL_STRIP_COST, VERTICAL_WALL_COST } from "./constants.js";
 import { findPathToCeiling } from "./pathfinding.js";
 import { getLaneCell } from "./grid.js";
 
 export function applyGameAction(room: BalloonRoom, action: GameAction, targetRoom?: BalloonRoom): GameActionResult {
   if (action.type === "SEND_BALLOON") {
+    if (!(ENTRY_LANES as readonly number[]).includes(action.lane)) {
+      return { action: action.type, applied: false, code: "invalid_lane", message: "Choose Lane 1, 2, 3, or 4" };
+    }
     if (room.health <= 0) return { action: action.type, applied: false, code: "sender_room_closed", message: "Your room is broken" };
     if (!targetRoom) return { action: action.type, applied: false, code: "target_not_found", message: "Target room not found" };
     const validation = validateSendBalloon(targetRoom, action);
