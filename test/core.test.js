@@ -121,6 +121,18 @@ test("send identity is deterministic and duplicate delivery is rejected", () => 
   assert.equal(room.balloons.length, 1);
 });
 
+test("duplicate delivery remains rejected after the original balloon leaves active state", () => {
+  const room = createBalloonRoom("identity-after-pop");
+  const action = sendAction(room, 2, 9);
+  assert.equal(applyGameAction(room, action).applied, true);
+  const balloon = room.balloons[0];
+  balloon.health = 1;
+  assert.equal(applyGameAction(room, { type: "POP_BALLOON", balloonId: balloon.id }).applied, true);
+  assert.equal(room.balloons.length, 0);
+  assert.equal(applyGameAction(room, action).code, "duplicate_balloon_id");
+  assert.equal(room.balloons.length, 0);
+});
+
 test("invalid send lane, target, type, identity, metadata, and room state are rejected", () => {
   const room = createBalloonRoom("invalid-send");
   assert.equal(applyGameAction(room, sendAction(room, 0, 1)).code, "invalid_lane");

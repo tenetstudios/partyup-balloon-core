@@ -3,7 +3,7 @@ import { getCellCenter, getLaneCell, isTraversalBlocked, SPAWN_LANES } from "./g
 import { getNailsTouchingCell, removeNailStrip } from "./nails.js";
 import { findPathToCeiling } from "./pathfinding.js";
 export function createBalloonRoom(id) {
-    return { id, health: ROOM_MAX_HEALTH, maxHealth: ROOM_MAX_HEALTH, balloons: [], walls: [], nailStrips: [], wallRevision: 0, width: 1, height: 1 };
+    return { id, health: ROOM_MAX_HEALTH, maxHealth: ROOM_MAX_HEALTH, balloons: [], processedSendIds: [], walls: [], nailStrips: [], wallRevision: 0, width: 1, height: 1 };
 }
 export function createBasicBalloon(roomId, id, spawnLane, pathBias = "left") {
     const currentCell = getLaneCell(spawnLane);

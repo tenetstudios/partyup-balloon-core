@@ -51,6 +51,7 @@ export type RoomState = {
     health: number;
     maxHealth: number;
     balloons: Balloon[];
+    processedSendIds: string[];
     walls: WallSegment[];
     nailStrips: NailStrip[];
     wallRevision: number;

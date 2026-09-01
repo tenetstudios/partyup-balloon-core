@@ -53,7 +53,7 @@ export function validateSendBalloon(room, action) {
     if (action.balloonId !== expectedBalloonId) {
         return { valid: false, code: "invalid_identity", message: "Balloon identity does not match send metadata" };
     }
-    if (room.balloons.some((balloon) => balloon.id === action.balloonId)) {
+    if (room.processedSendIds.includes(action.balloonId)) {
         return { valid: false, code: "duplicate_balloon_id", message: "Balloon already sent" };
     }
     return { valid: true, code: "valid", message: `Basic Balloon sent through Lane ${action.lane}` };
@@ -66,6 +66,7 @@ export function sendBalloon(room, action) {
     if (!recalculateBalloonPath(room, balloon)) {
         return { valid: false, code: "path_unavailable", message: "No route to the ceiling" };
     }
+    room.processedSendIds.push(action.balloonId);
     room.balloons.push(balloon);
     return { valid: true, code: "valid", message: `Basic Balloon sent through Lane ${action.lane}`, balloon };
 }
