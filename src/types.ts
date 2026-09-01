@@ -6,6 +6,12 @@ export type NailStatus = "active" | "broken";
 export type NailStripStatus = NailStatus;
 export type BalloonType = "basic";
 
+export type PlayerEconomy = {
+  coins: number;
+  income: number;
+  nextIncomeTickAt: number;
+};
+
 export type GridPosition = { column: number; row: number };
 export type GridCell = GridPosition;
 export type GridEdge = { orientation: WallOrientation; gridX: number; gridY: number };
@@ -42,6 +48,7 @@ export type Balloon = {
 
 export type RoomState = {
   id: string;
+  economy: PlayerEconomy;
   health: number;
   maxHealth: number;
   balloons: Balloon[];
@@ -93,13 +100,14 @@ export type GameAction =
   | { type: "PLACE_NAILS"; wallSegmentId: string }
   | { type: "REMOVE_NAILS"; wallSegmentId: string }
   | { type: "POP_BALLOON"; balloonId: string }
+  | { type: "APPLY_INCOME_TICK"; simulationTimeMs: number }
   | SendBalloonAction;
 
 export type GameActionResult =
-  | { action: GameAction["type"]; applied: true; code: "valid"; message: string; damage?: BalloonDamageResult; spawnedBalloon?: Balloon }
+  | { action: GameAction["type"]; applied: true; code: "valid"; message: string; damage?: BalloonDamageResult; spawnedBalloon?: Balloon; incomeTicksApplied?: number }
   | { action: GameAction["type"]; applied: false; code: string; message: string };
 
-export type SendBalloonValidationCode = "valid" | "invalid_lane" | "target_not_found" | "room_closed" | "invalid_balloon_type" | "duplicate_balloon_id" | "invalid_identity" | "invalid_metadata" | "path_unavailable";
+export type SendBalloonValidationCode = "valid" | "invalid_lane" | "target_not_found" | "room_closed" | "sender_room_closed" | "invalid_balloon_type" | "duplicate_balloon_id" | "invalid_identity" | "invalid_metadata" | "path_unavailable" | "insufficient_coins";
 export type SendBalloonResult = {
   valid: boolean;
   code: SendBalloonValidationCode;

@@ -1,12 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  BASIC_BALLOON_COST,
   BASIC_BALLOON_HP,
+  BASIC_BALLOON_INCOME_GAIN,
   BASIC_BALLOON_ROOM_DAMAGE,
   ENTRY_LANES,
+  HORIZONTAL_WALL_COST,
+  INCOME_TICK_INTERVAL_MS,
   MAX_NAIL_STRIPS,
+  NAIL_STRIP_COST,
   NAIL_MAX_DURABILITY,
   ROOM_MAX_HEALTH,
+  STARTING_COINS,
+  STARTING_INCOME,
+  VERTICAL_WALL_COST,
   applyGameAction,
   createBalloonRoom,
   createBasicBalloon,
@@ -53,6 +61,10 @@ function sendAction(room, lane, senderSequence, overrides = {}) {
   };
 }
 
+function applySend(targetRoom, action, senderRoom = createBalloonRoom(`sender-${action.senderSequence}`)) {
+  return applyGameAction(senderRoom, action, targetRoom);
+}
+
 test("basic balloon uses canonical HP", () => {
   assert.equal(createBasicBalloon("room", "balloon", 1).health, BASIC_BALLOON_HP);
 });
@@ -82,7 +94,7 @@ test("all four entry lanes map to distinct canonical cells", () => {
 
 test("one SEND_BALLOON action creates exactly one basic balloon in the selected lane", () => {
   const room = createBalloonRoom("single-send");
-  const result = applyGameAction(room, sendAction(room, 3, 1));
+  const result = applySend(room, sendAction(room, 3, 1));
   assert.equal(result.applied, true);
   assert.equal(room.balloons.length, 1);
   assert.equal(result.spawnedBalloon, room.balloons[0]);
@@ -93,8 +105,9 @@ test("one SEND_BALLOON action creates exactly one basic balloon in the selected 
 
 test("repeated sends remain in the selected lane and create unique balloons", () => {
   const room = createBalloonRoom("repeat-send");
+  const sender = createBalloonRoom("repeat-sender");
   for (let sequence = 1; sequence <= 4; sequence += 1) {
-    assert.equal(applyGameAction(room, sendAction(room, 4, sequence)).applied, true);
+    assert.equal(applySend(room, sendAction(room, 4, sequence), sender).applied, true);
   }
   assert.equal(room.balloons.length, 4);
   assert.deepEqual(room.balloons.map((balloon) => balloon.spawnLane), [4, 4, 4, 4]);
@@ -103,9 +116,10 @@ test("repeated sends remain in the selected lane and create unique balloons", ()
 
 test("changing the chosen lane changes the next balloon spawn lane", () => {
   const room = createBalloonRoom("change-lane");
-  applyGameAction(room, sendAction(room, 1, 1));
-  applyGameAction(room, sendAction(room, 2, 2));
-  applyGameAction(room, sendAction(room, 4, 3));
+  const sender = createBalloonRoom("change-sender");
+  applySend(room, sendAction(room, 1, 1), sender);
+  applySend(room, sendAction(room, 2, 2), sender);
+  applySend(room, sendAction(room, 4, 3), sender);
   assert.deepEqual(room.balloons.map((balloon) => balloon.spawnLane), [1, 2, 4]);
 });
 
@@ -113,9 +127,10 @@ test("send identity is deterministic and duplicate delivery is rejected", () => 
   const room = createBalloonRoom("identity");
   const first = sendAction(room, 2, 8);
   const replay = sendAction(room, 2, 8);
+  const sender = createBalloonRoom("identity-sender");
   assert.equal(first.balloonId, replay.balloonId);
-  assert.equal(applyGameAction(room, first).applied, true);
-  const duplicate = applyGameAction(room, replay);
+  assert.equal(applySend(room, first, sender).applied, true);
+  const duplicate = applySend(room, replay, sender);
   assert.equal(duplicate.applied, false);
   assert.equal(duplicate.code, "duplicate_balloon_id");
   assert.equal(room.balloons.length, 1);
@@ -124,24 +139,26 @@ test("send identity is deterministic and duplicate delivery is rejected", () => 
 test("duplicate delivery remains rejected after the original balloon leaves active state", () => {
   const room = createBalloonRoom("identity-after-pop");
   const action = sendAction(room, 2, 9);
-  assert.equal(applyGameAction(room, action).applied, true);
+  const sender = createBalloonRoom("identity-after-pop-sender");
+  assert.equal(applySend(room, action, sender).applied, true);
   const balloon = room.balloons[0];
   balloon.health = 1;
   assert.equal(applyGameAction(room, { type: "POP_BALLOON", balloonId: balloon.id }).applied, true);
   assert.equal(room.balloons.length, 0);
-  assert.equal(applyGameAction(room, action).code, "duplicate_balloon_id");
+  assert.equal(applySend(room, action, sender).code, "duplicate_balloon_id");
   assert.equal(room.balloons.length, 0);
 });
 
 test("invalid send lane, target, type, identity, metadata, and room state are rejected", () => {
   const room = createBalloonRoom("invalid-send");
-  assert.equal(applyGameAction(room, sendAction(room, 0, 1)).code, "invalid_lane");
-  assert.equal(applyGameAction(room, sendAction(room, 1, 2, { targetRoomId: "missing" })).code, "target_not_found");
-  assert.equal(applyGameAction(room, sendAction(room, 1, 3, { balloonType: "heavy" })).code, "invalid_balloon_type");
-  assert.equal(applyGameAction(room, sendAction(room, 1, 4, { balloonId: "forged" })).code, "invalid_identity");
-  assert.equal(applyGameAction(room, sendAction(room, 1, 0)).code, "invalid_metadata");
+  const sender = createBalloonRoom("invalid-sender");
+  assert.equal(applySend(room, sendAction(room, 0, 1), sender).code, "invalid_lane");
+  assert.equal(applySend(room, sendAction(room, 1, 2, { targetRoomId: "missing" }), sender).code, "target_not_found");
+  assert.equal(applySend(room, sendAction(room, 1, 3, { balloonType: "heavy" }), sender).code, "invalid_balloon_type");
+  assert.equal(applySend(room, sendAction(room, 1, 4, { balloonId: "forged" }), sender).code, "invalid_identity");
+  assert.equal(applySend(room, sendAction(room, 1, 0), sender).code, "invalid_metadata");
   room.health = 0;
-  assert.equal(applyGameAction(room, sendAction(room, 1, 5)).code, "room_closed");
+  assert.equal(applySend(room, sendAction(room, 1, 5), sender).code, "room_closed");
   assert.equal(room.balloons.length, 0);
 });
 
@@ -149,14 +166,14 @@ test("a sent balloon immediately uses the target room pathfinding", () => {
   const room = createBalloonRoom("send-route");
   placeWall(room, wall(room, "vertical", 3, 5));
   placeWall(room, wall(room, "horizontal", 2, 5));
-  const result = applyGameAction(room, sendAction(room, 2, 1));
+  const result = applySend(room, sendAction(room, 2, 1));
   assert.equal(result.applied, true);
   assert.ok(result.spawnedBalloon.path.some((cell) => cell.column === 1));
 });
 
 test("a sent balloon interacts with existing nails through normal simulation", () => {
   const room = armedContactRoom("sent-nails");
-  const result = applyGameAction(room, sendAction(room, 2, 1));
+  const result = applySend(room, sendAction(room, 2, 1));
   assert.equal(result.applied, true);
   const events = updateRoomSimulation(room, 1).filter((event) => event.type === "nail_contact");
   assert.equal(events.length, 1);
@@ -330,4 +347,123 @@ test("direct damage API still deals exactly one by default", () => {
   const balloon = createBasicBalloon(room.id, "balloon", 4);
   room.balloons.push(balloon);
   assert.deepEqual(damageBalloon(room, balloon.id), { balloonId: balloon.id, remainingHealth: 2, popped: false });
+});
+
+test("Phase 5 economy starts with canonical coins, income, and next tick", () => {
+  const room = createBalloonRoom("economy-start");
+  assert.deepEqual(room.economy, {
+    coins: STARTING_COINS,
+    income: STARTING_INCOME,
+    nextIncomeTickAt: INCOME_TICK_INTERVAL_MS,
+  });
+});
+
+test("income ticks use deterministic simulation time and catch up exactly", () => {
+  const room = createBalloonRoom("income-ticks");
+  room.economy.coins = 200;
+  assert.equal(applyGameAction(room, { type: "APPLY_INCOME_TICK", simulationTimeMs: 4999 }).incomeTicksApplied, 0);
+  assert.equal(room.economy.coins, 200);
+  assert.equal(applyGameAction(room, { type: "APPLY_INCOME_TICK", simulationTimeMs: 5000 }).incomeTicksApplied, 1);
+  assert.equal(room.economy.coins, 300);
+  assert.equal(room.economy.nextIncomeTickAt, 10000);
+  assert.equal(applyGameAction(room, { type: "APPLY_INCOME_TICK", simulationTimeMs: 15000 }).incomeTicksApplied, 2);
+  assert.equal(room.economy.coins, 500);
+  assert.equal(room.economy.nextIncomeTickAt, 20000);
+});
+
+test("successful sends cost coins, grow income, and create exactly one balloon each", () => {
+  const sender = createBalloonRoom("economy-sender");
+  const target = createBalloonRoom("economy-target");
+  sender.economy.coins = 200;
+  for (let sequence = 1; sequence <= 4; sequence += 1) {
+    assert.equal(applyGameAction(sender, sendAction(target, 3, sequence), target).applied, true);
+  }
+  assert.equal(sender.economy.coins, 200 - 4 * BASIC_BALLOON_COST);
+  assert.equal(sender.economy.income, STARTING_INCOME + 4 * BASIC_BALLOON_INCOME_GAIN);
+  assert.equal(target.balloons.length, 4);
+});
+
+test("five balloon investments compound into the next income tick", () => {
+  const sender = createBalloonRoom("compound-sender");
+  const target = createBalloonRoom("compound-target");
+  for (let sequence = 1; sequence <= 5; sequence += 1) {
+    assert.equal(applyGameAction(sender, sendAction(target, 1, sequence), target).applied, true);
+  }
+  assert.equal(sender.economy.coins, 375);
+  assert.equal(sender.economy.income, 125);
+  applyGameAction(sender, { type: "APPLY_INCOME_TICK", simulationTimeMs: INCOME_TICK_INTERVAL_MS });
+  assert.equal(sender.economy.coins, 500);
+});
+
+test("insufficient send is atomic and never creates a balloon", () => {
+  const sender = createBalloonRoom("poor-sender");
+  const target = createBalloonRoom("poor-target");
+  sender.economy.coins = BASIC_BALLOON_COST - 5;
+  const result = applyGameAction(sender, sendAction(target, 2, 1), target);
+  assert.equal(result.code, "insufficient_coins");
+  assert.equal(sender.economy.coins, 20);
+  assert.equal(sender.economy.income, STARTING_INCOME);
+  assert.equal(target.balloons.length, 0);
+});
+
+test("valid wall and nail purchases charge canonical costs", () => {
+  const room = createBalloonRoom("defense-purchases");
+  const vertical = wall(room, "vertical", 3, 8);
+  assert.equal(applyGameAction(room, { type: "PLACE_WALL", wall: vertical }).applied, true);
+  assert.equal(room.economy.coins, STARTING_COINS - VERTICAL_WALL_COST);
+  assert.equal(applyGameAction(room, { type: "PLACE_NAILS", wallSegmentId: vertical.id }).applied, true);
+  assert.equal(room.economy.coins, STARTING_COINS - VERTICAL_WALL_COST - NAIL_STRIP_COST);
+  assert.equal(room.economy.income, STARTING_INCOME);
+  const horizontal = wall(room, "horizontal", 2, 8);
+  assert.equal(applyGameAction(room, { type: "PLACE_WALL", wall: horizontal }).applied, true);
+  assert.equal(room.economy.coins, STARTING_COINS - VERTICAL_WALL_COST - NAIL_STRIP_COST - HORIZONTAL_WALL_COST);
+});
+
+test("insufficient wall and nail purchases are atomic", () => {
+  const wallRoom = createBalloonRoom("poor-wall");
+  wallRoom.economy.coins = VERTICAL_WALL_COST - 25;
+  assert.equal(applyGameAction(wallRoom, { type: "PLACE_WALL", wall: wall(wallRoom, "vertical", 3, 8) }).code, "insufficient_coins");
+  assert.equal(wallRoom.economy.coins, 50);
+  assert.equal(wallRoom.walls.length, 0);
+
+  const nailRoom = createBalloonRoom("poor-nails");
+  const nailWall = wall(nailRoom, "vertical", 3, 8);
+  placeWall(nailRoom, nailWall);
+  nailRoom.economy.coins = NAIL_STRIP_COST - 10;
+  assert.equal(applyGameAction(nailRoom, { type: "PLACE_NAILS", wallSegmentId: nailWall.id }).code, "insufficient_coins");
+  assert.equal(nailRoom.economy.coins, 20);
+  assert.equal(nailRoom.nailStrips.length, 0);
+});
+
+test("wall and nail removal never refund coins and replacement nails cost again", () => {
+  const room = createBalloonRoom("no-refunds");
+  const segment = wall(room, "vertical", 3, 8);
+  applyGameAction(room, { type: "PLACE_WALL", wall: segment });
+  applyGameAction(room, { type: "PLACE_NAILS", wallSegmentId: segment.id });
+  const afterPurchases = room.economy.coins;
+  assert.equal(applyGameAction(room, { type: "REMOVE_NAILS", wallSegmentId: segment.id }).applied, true);
+  assert.equal(room.economy.coins, afterPurchases);
+  assert.equal(applyGameAction(room, { type: "PLACE_NAILS", wallSegmentId: segment.id }).applied, true);
+  assert.equal(room.economy.coins, afterPurchases - NAIL_STRIP_COST);
+  assert.equal(applyGameAction(room, { type: "REMOVE_WALL", wallSegmentId: segment.id }).message, "Nails removed; wall remains");
+  const beforeWallRemoval = room.economy.coins;
+  assert.equal(applyGameAction(room, { type: "REMOVE_WALL", wallSegmentId: segment.id }).applied, true);
+  assert.equal(room.economy.coins, beforeWallRemoval);
+});
+
+test("nail breakage and manual popping never change coins", () => {
+  const room = createBalloonRoom("free-pop-no-refund");
+  const segment = wall(room, "vertical", 3, 8);
+  applyGameAction(room, { type: "PLACE_WALL", wall: segment });
+  applyGameAction(room, { type: "PLACE_NAILS", wallSegmentId: segment.id });
+  room.nailStrips[0].durability = 1;
+  room.balloons.push(createBasicBalloon(room.id, "breaker", 2));
+  const coinsBeforeBreak = room.economy.coins;
+  updateRoomSimulation(room, 1);
+  assert.equal(room.nailStrips.length, 0);
+  assert.equal(room.economy.coins, coinsBeforeBreak);
+  const remaining = room.balloons[0];
+  assert.ok(remaining);
+  applyGameAction(room, { type: "POP_BALLOON", balloonId: remaining.id });
+  assert.equal(room.economy.coins, coinsBeforeBreak);
 });

@@ -2,8 +2,9 @@ import { BASIC_BALLOON, DEV_SPAWN_MAX_SECONDS, DEV_SPAWN_MIN_SECONDS, MANUAL_POP
 import { getCellCenter, getLaneCell, isTraversalBlocked, SPAWN_LANES } from "./grid.js";
 import { getNailsTouchingCell, removeNailStrip } from "./nails.js";
 import { findPathToCeiling } from "./pathfinding.js";
+import { createPlayerEconomy } from "./economy.js";
 export function createBalloonRoom(id) {
-    return { id, health: ROOM_MAX_HEALTH, maxHealth: ROOM_MAX_HEALTH, balloons: [], processedSendIds: [], walls: [], nailStrips: [], wallRevision: 0, width: 1, height: 1 };
+    return { id, economy: createPlayerEconomy(), health: ROOM_MAX_HEALTH, maxHealth: ROOM_MAX_HEALTH, balloons: [], processedSendIds: [], walls: [], nailStrips: [], wallRevision: 0, width: 1, height: 1 };
 }
 export function createBasicBalloon(roomId, id, spawnLane, pathBias = "left") {
     const currentCell = getLaneCell(spawnLane);

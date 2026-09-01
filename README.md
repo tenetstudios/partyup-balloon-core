@@ -1,6 +1,6 @@
 # @partyup/balloon-core
 
-Canonical, headless TypeScript rules for PartyUp Balloon Rooms through Phase 3.
+Canonical, headless TypeScript rules for PartyUp Balloon Rooms through Phase 5.
 
 The package owns logical state, constants, movement, route finding, wall validation,
 nail contact, and typed player actions. It intentionally has no React, browser,
@@ -14,6 +14,11 @@ explicit match, sender, target room, lane, sequence, and send time; the core
 derives a stable balloon ID, validates the action, and spawns the existing Basic
 Balloon at the canonical lane entry before normal pathfinding takes over.
 
+Phase 5 adds canonical per-room Coins, Income, deterministic recurring income
+ticks, costed wall/nail placement, and atomic cost-plus-Income Basic Balloon
+sends. `applyGameAction(actorRoom, action, targetRoom?)` charges the actor and
+spawns successful sends in the target; removals and breakage never refund Coins.
+
 Both PartyUp clients consume an immutable Git commit of this repository so their
 rules cannot drift. Rendering, animation timing, and pointer/touch hit testing stay
 inside the clients.
@@ -23,4 +28,4 @@ npm ci
 npm test
 ```
 
-Phase 4 gameplay and multiplayer are explicitly out of scope.
+Networking and server authority remain explicitly out of scope.
