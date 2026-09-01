@@ -1,7 +1,14 @@
 import { placeNailStrip, removeNailStrip } from "./nails.js";
+import { sendBalloon } from "./offense.js";
 import { damageBalloon } from "./simulation.js";
 import { placeWall, removeWall } from "./walls.js";
 export function applyGameAction(room, action) {
+    if (action.type === "SEND_BALLOON") {
+        const result = sendBalloon(room, action);
+        return result.valid && result.balloon
+            ? { action: action.type, applied: true, code: "valid", message: result.message, spawnedBalloon: result.balloon }
+            : { action: action.type, applied: false, code: result.code, message: result.message };
+    }
     if (action.type === "POP_BALLOON") {
         const damage = damageBalloon(room, action.balloonId);
         return damage

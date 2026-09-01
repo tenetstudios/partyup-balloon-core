@@ -10,6 +10,7 @@ import {
   applyGameAction,
   createBalloonRoom,
   createBasicBalloon,
+  createSendBalloonAction,
   createWallSegment,
   damageBalloon,
   findPathToCeiling,
@@ -38,6 +39,20 @@ function armedContactRoom(id, durability = NAIL_MAX_DURABILITY) {
   return room;
 }
 
+function sendAction(room, lane, senderSequence, overrides = {}) {
+  return {
+    ...createSendBalloonAction({
+      matchId: "phase-4-match",
+      senderId: "attacker",
+      targetRoomId: room.id,
+      lane,
+      senderSequence,
+      sentAt: senderSequence * 1000,
+    }),
+    ...overrides,
+  };
+}
+
 test("basic balloon uses canonical HP", () => {
   assert.equal(createBasicBalloon("room", "balloon", 1).health, BASIC_BALLOON_HP);
 });
@@ -63,6 +78,78 @@ test("ceiling escape applies canonical room damage once", () => {
 test("all four entry lanes map to distinct canonical cells", () => {
   assert.deepEqual(ENTRY_LANES, [1, 2, 3, 4]);
   assert.deepEqual(ENTRY_LANES.map((lane) => getLaneCell(lane).column), [0, 2, 3, 5]);
+});
+
+test("one SEND_BALLOON action creates exactly one basic balloon in the selected lane", () => {
+  const room = createBalloonRoom("single-send");
+  const result = applyGameAction(room, sendAction(room, 3, 1));
+  assert.equal(result.applied, true);
+  assert.equal(room.balloons.length, 1);
+  assert.equal(result.spawnedBalloon, room.balloons[0]);
+  assert.equal(room.balloons[0].spawnLane, 3);
+  assert.equal(room.balloons[0].health, BASIC_BALLOON_HP);
+  assert.deepEqual(room.balloons[0].currentCell, getLaneCell(3));
+});
+
+test("repeated sends remain in the selected lane and create unique balloons", () => {
+  const room = createBalloonRoom("repeat-send");
+  for (let sequence = 1; sequence <= 4; sequence += 1) {
+    assert.equal(applyGameAction(room, sendAction(room, 4, sequence)).applied, true);
+  }
+  assert.equal(room.balloons.length, 4);
+  assert.deepEqual(room.balloons.map((balloon) => balloon.spawnLane), [4, 4, 4, 4]);
+  assert.equal(new Set(room.balloons.map((balloon) => balloon.id)).size, 4);
+});
+
+test("changing the chosen lane changes the next balloon spawn lane", () => {
+  const room = createBalloonRoom("change-lane");
+  applyGameAction(room, sendAction(room, 1, 1));
+  applyGameAction(room, sendAction(room, 2, 2));
+  applyGameAction(room, sendAction(room, 4, 3));
+  assert.deepEqual(room.balloons.map((balloon) => balloon.spawnLane), [1, 2, 4]);
+});
+
+test("send identity is deterministic and duplicate delivery is rejected", () => {
+  const room = createBalloonRoom("identity");
+  const first = sendAction(room, 2, 8);
+  const replay = sendAction(room, 2, 8);
+  assert.equal(first.balloonId, replay.balloonId);
+  assert.equal(applyGameAction(room, first).applied, true);
+  const duplicate = applyGameAction(room, replay);
+  assert.equal(duplicate.applied, false);
+  assert.equal(duplicate.code, "duplicate_balloon_id");
+  assert.equal(room.balloons.length, 1);
+});
+
+test("invalid send lane, target, type, identity, metadata, and room state are rejected", () => {
+  const room = createBalloonRoom("invalid-send");
+  assert.equal(applyGameAction(room, sendAction(room, 0, 1)).code, "invalid_lane");
+  assert.equal(applyGameAction(room, sendAction(room, 1, 2, { targetRoomId: "missing" })).code, "target_not_found");
+  assert.equal(applyGameAction(room, sendAction(room, 1, 3, { balloonType: "heavy" })).code, "invalid_balloon_type");
+  assert.equal(applyGameAction(room, sendAction(room, 1, 4, { balloonId: "forged" })).code, "invalid_identity");
+  assert.equal(applyGameAction(room, sendAction(room, 1, 0)).code, "invalid_metadata");
+  room.health = 0;
+  assert.equal(applyGameAction(room, sendAction(room, 1, 5)).code, "room_closed");
+  assert.equal(room.balloons.length, 0);
+});
+
+test("a sent balloon immediately uses the target room pathfinding", () => {
+  const room = createBalloonRoom("send-route");
+  placeWall(room, wall(room, "vertical", 3, 5));
+  placeWall(room, wall(room, "horizontal", 2, 5));
+  const result = applyGameAction(room, sendAction(room, 2, 1));
+  assert.equal(result.applied, true);
+  assert.ok(result.spawnedBalloon.path.some((cell) => cell.column === 1));
+});
+
+test("a sent balloon interacts with existing nails through normal simulation", () => {
+  const room = armedContactRoom("sent-nails");
+  const result = applyGameAction(room, sendAction(room, 2, 1));
+  assert.equal(result.applied, true);
+  const events = updateRoomSimulation(room, 1).filter((event) => event.type === "nail_contact");
+  assert.equal(events.length, 1);
+  assert.equal(result.spawnedBalloon.health, BASIC_BALLOON_HP - 1);
+  assert.equal(room.nailStrips[0].durability, NAIL_MAX_DURABILITY - 1);
 });
 
 test("a wall blocks its represented grid edge", () => {

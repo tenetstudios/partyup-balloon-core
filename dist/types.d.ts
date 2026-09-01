@@ -4,6 +4,7 @@ export type PathBias = "left" | "right";
 export type WallOrientation = "vertical" | "horizontal";
 export type NailStatus = "active" | "broken";
 export type NailStripStatus = NailStatus;
+export type BalloonType = "basic";
 export type GridPosition = {
     column: number;
     row: number;
@@ -92,6 +93,17 @@ export type NailValidationResult = {
     code: NailValidationCode;
     message: string;
 };
+export type SendBalloonAction = {
+    type: "SEND_BALLOON";
+    balloonType: BalloonType;
+    lane: SpawnLane;
+    targetRoomId: string;
+    balloonId: string;
+    matchId: string;
+    senderId: string;
+    senderSequence: number;
+    sentAt: number;
+};
 export type GameAction = {
     type: "PLACE_WALL";
     wall: WallSegment;
@@ -107,17 +119,25 @@ export type GameAction = {
 } | {
     type: "POP_BALLOON";
     balloonId: string;
-};
+} | SendBalloonAction;
 export type GameActionResult = {
     action: GameAction["type"];
     applied: true;
     code: "valid";
     message: string;
     damage?: BalloonDamageResult;
+    spawnedBalloon?: Balloon;
 } | {
     action: GameAction["type"];
     applied: false;
     code: string;
     message: string;
+};
+export type SendBalloonValidationCode = "valid" | "invalid_lane" | "target_not_found" | "room_closed" | "invalid_balloon_type" | "duplicate_balloon_id" | "invalid_identity" | "invalid_metadata" | "path_unavailable";
+export type SendBalloonResult = {
+    valid: boolean;
+    code: SendBalloonValidationCode;
+    message: string;
+    balloon?: Balloon;
 };
 //# sourceMappingURL=types.d.ts.map
