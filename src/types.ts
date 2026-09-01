@@ -12,6 +12,23 @@ export type PlayerEconomy = {
   nextIncomeTickAt: number;
 };
 
+export type QueuedBalloon = {
+  id: string;
+  balloonType: BalloonType;
+  lane: SpawnLane;
+  targetRoomId: string;
+  purchasedAt: number;
+  matchId: string;
+  senderId: string;
+  senderSequence: number;
+};
+
+export type PlayerAttackState = {
+  queue: QueuedBalloon[];
+  lastLaunchAt: number | null;
+  nextLaunchAt: number | null;
+};
+
 export type GridPosition = { column: number; row: number };
 export type GridCell = GridPosition;
 export type GridEdge = { orientation: WallOrientation; gridX: number; gridY: number };
@@ -49,6 +66,7 @@ export type Balloon = {
 export type RoomState = {
   id: string;
   economy: PlayerEconomy;
+  attack: PlayerAttackState;
   health: number;
   maxHealth: number;
   balloons: Balloon[];
@@ -101,13 +119,14 @@ export type GameAction =
   | { type: "REMOVE_NAILS"; wallSegmentId: string }
   | { type: "POP_BALLOON"; balloonId: string }
   | { type: "APPLY_INCOME_TICK"; simulationTimeMs: number }
+  | { type: "APPLY_LAUNCH_QUEUE"; simulationTimeMs: number }
   | SendBalloonAction;
 
 export type GameActionResult =
-  | { action: GameAction["type"]; applied: true; code: "valid"; message: string; damage?: BalloonDamageResult; spawnedBalloon?: Balloon; incomeTicksApplied?: number }
+  | { action: GameAction["type"]; applied: true; code: "valid"; message: string; damage?: BalloonDamageResult; spawnedBalloon?: Balloon; queuedBalloon?: QueuedBalloon; launchedBalloon?: Balloon; incomeTicksApplied?: number }
   | { action: GameAction["type"]; applied: false; code: string; message: string };
 
-export type SendBalloonValidationCode = "valid" | "invalid_lane" | "target_not_found" | "room_closed" | "sender_room_closed" | "invalid_balloon_type" | "duplicate_balloon_id" | "invalid_identity" | "invalid_metadata" | "path_unavailable" | "insufficient_coins";
+export type SendBalloonValidationCode = "valid" | "invalid_lane" | "target_not_found" | "room_closed" | "sender_room_closed" | "invalid_balloon_type" | "duplicate_balloon_id" | "invalid_identity" | "invalid_metadata" | "path_unavailable" | "insufficient_coins" | "queue_full" | "invalid_time";
 export type SendBalloonResult = {
   valid: boolean;
   code: SendBalloonValidationCode;

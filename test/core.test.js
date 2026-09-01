@@ -4,11 +4,13 @@ import {
   BASIC_BALLOON_COST,
   BASIC_BALLOON_HP,
   BASIC_BALLOON_INCOME_GAIN,
+  BASIC_BALLOON_LAUNCH_INTERVAL_MS,
   BASIC_BALLOON_ROOM_DAMAGE,
   ENTRY_LANES,
   HORIZONTAL_WALL_COST,
   INCOME_TICK_INTERVAL_MS,
   MAX_NAIL_STRIPS,
+  MAX_LAUNCH_QUEUE_SIZE,
   NAIL_STRIP_COST,
   NAIL_MAX_DURABILITY,
   ROOM_MAX_HEALTH,
@@ -65,6 +67,10 @@ function applySend(targetRoom, action, senderRoom = createBalloonRoom(`sender-${
   return applyGameAction(senderRoom, action, targetRoom);
 }
 
+function applyLaunch(senderRoom, targetRoom, simulationTimeMs) {
+  return applyGameAction(senderRoom, { type: "APPLY_LAUNCH_QUEUE", simulationTimeMs }, targetRoom);
+}
+
 test("basic balloon uses canonical HP", () => {
   assert.equal(createBasicBalloon("room", "balloon", 1).health, BASIC_BALLOON_HP);
 });
@@ -92,35 +98,49 @@ test("all four entry lanes map to distinct canonical cells", () => {
   assert.deepEqual(ENTRY_LANES.map((lane) => getLaneCell(lane).column), [0, 2, 3, 5]);
 });
 
-test("one SEND_BALLOON action creates exactly one basic balloon in the selected lane", () => {
+test("one SEND_BALLOON action queues exactly one purchase and the scheduler launches it", () => {
   const room = createBalloonRoom("single-send");
-  const result = applySend(room, sendAction(room, 3, 1));
+  const sender = createBalloonRoom("single-sender");
+  const result = applySend(room, sendAction(room, 3, 1), sender);
   assert.equal(result.applied, true);
-  assert.equal(room.balloons.length, 1);
-  assert.equal(result.spawnedBalloon, room.balloons[0]);
+  assert.equal(room.balloons.length, 0);
+  assert.equal(sender.attack.queue.length, 1);
+  assert.equal(result.queuedBalloon, sender.attack.queue[0]);
+  const launch = applyLaunch(sender, room, 0);
+  assert.equal(launch.applied, true);
+  assert.equal(launch.launchedBalloon, room.balloons[0]);
   assert.equal(room.balloons[0].spawnLane, 3);
   assert.equal(room.balloons[0].health, BASIC_BALLOON_HP);
   assert.deepEqual(room.balloons[0].currentCell, getLaneCell(3));
 });
 
-test("repeated sends remain in the selected lane and create unique balloons", () => {
+test("rapid sends queue without instant stacking and launch at canonical spacing", () => {
   const room = createBalloonRoom("repeat-send");
   const sender = createBalloonRoom("repeat-sender");
   for (let sequence = 1; sequence <= 4; sequence += 1) {
     assert.equal(applySend(room, sendAction(room, 4, sequence), sender).applied, true);
   }
+  assert.equal(sender.attack.queue.length, 4);
+  assert.equal(room.balloons.length, 0);
+  assert.ok(applyLaunch(sender, room, 0).launchedBalloon);
+  assert.equal(applyLaunch(sender, room, BASIC_BALLOON_LAUNCH_INTERVAL_MS - 1).launchedBalloon, undefined);
+  assert.ok(applyLaunch(sender, room, BASIC_BALLOON_LAUNCH_INTERVAL_MS).launchedBalloon);
+  assert.ok(applyLaunch(sender, room, BASIC_BALLOON_LAUNCH_INTERVAL_MS * 2).launchedBalloon);
+  assert.ok(applyLaunch(sender, room, BASIC_BALLOON_LAUNCH_INTERVAL_MS * 3).launchedBalloon);
   assert.equal(room.balloons.length, 4);
   assert.deepEqual(room.balloons.map((balloon) => balloon.spawnLane), [4, 4, 4, 4]);
   assert.equal(new Set(room.balloons.map((balloon) => balloon.id)).size, 4);
 });
 
-test("changing the chosen lane changes the next balloon spawn lane", () => {
+test("queue preserves FIFO lane order and locks lane at purchase", () => {
   const room = createBalloonRoom("change-lane");
   const sender = createBalloonRoom("change-sender");
-  applySend(room, sendAction(room, 1, 1), sender);
-  applySend(room, sendAction(room, 2, 2), sender);
-  applySend(room, sendAction(room, 4, 3), sender);
-  assert.deepEqual(room.balloons.map((balloon) => balloon.spawnLane), [1, 2, 4]);
+  applySend(room, sendAction(room, 4, 1), sender);
+  applySend(room, sendAction(room, 1, 2), sender);
+  applySend(room, sendAction(room, 3, 3), sender);
+  assert.deepEqual(sender.attack.queue.map((queued) => queued.lane), [4, 1, 3]);
+  for (const time of [0, 600, 1200]) applyLaunch(sender, room, time);
+  assert.deepEqual(room.balloons.map((balloon) => balloon.spawnLane), [4, 1, 3]);
 });
 
 test("send identity is deterministic and duplicate delivery is rejected", () => {
@@ -133,7 +153,8 @@ test("send identity is deterministic and duplicate delivery is rejected", () => 
   const duplicate = applySend(room, replay, sender);
   assert.equal(duplicate.applied, false);
   assert.equal(duplicate.code, "duplicate_balloon_id");
-  assert.equal(room.balloons.length, 1);
+  assert.equal(sender.attack.queue.length, 1);
+  assert.equal(room.balloons.length, 0);
 });
 
 test("duplicate delivery remains rejected after the original balloon leaves active state", () => {
@@ -141,6 +162,7 @@ test("duplicate delivery remains rejected after the original balloon leaves acti
   const action = sendAction(room, 2, 9);
   const sender = createBalloonRoom("identity-after-pop-sender");
   assert.equal(applySend(room, action, sender).applied, true);
+  applyLaunch(sender, room, 0);
   const balloon = room.balloons[0];
   balloon.health = 1;
   assert.equal(applyGameAction(room, { type: "POP_BALLOON", balloonId: balloon.id }).applied, true);
@@ -162,22 +184,24 @@ test("invalid send lane, target, type, identity, metadata, and room state are re
   assert.equal(room.balloons.length, 0);
 });
 
-test("a sent balloon immediately uses the target room pathfinding", () => {
+test("a launched balloon uses the target room pathfinding", () => {
   const room = createBalloonRoom("send-route");
+  const sender = createBalloonRoom("send-route-sender");
   placeWall(room, wall(room, "vertical", 3, 5));
   placeWall(room, wall(room, "horizontal", 2, 5));
-  const result = applySend(room, sendAction(room, 2, 1));
-  assert.equal(result.applied, true);
-  assert.ok(result.spawnedBalloon.path.some((cell) => cell.column === 1));
+  assert.equal(applySend(room, sendAction(room, 2, 1), sender).applied, true);
+  const result = applyLaunch(sender, room, 0);
+  assert.ok(result.launchedBalloon.path.some((cell) => cell.column === 1));
 });
 
-test("a sent balloon interacts with existing nails through normal simulation", () => {
+test("a launched balloon interacts with existing nails through normal simulation", () => {
   const room = armedContactRoom("sent-nails");
-  const result = applySend(room, sendAction(room, 2, 1));
-  assert.equal(result.applied, true);
+  const sender = createBalloonRoom("sent-nails-sender");
+  assert.equal(applySend(room, sendAction(room, 2, 1), sender).applied, true);
+  const result = applyLaunch(sender, room, 0);
   const events = updateRoomSimulation(room, 1).filter((event) => event.type === "nail_contact");
   assert.equal(events.length, 1);
-  assert.equal(result.spawnedBalloon.health, BASIC_BALLOON_HP - 1);
+  assert.equal(result.launchedBalloon.health, BASIC_BALLOON_HP - 1);
   assert.equal(room.nailStrips[0].durability, NAIL_MAX_DURABILITY - 1);
 });
 
@@ -349,8 +373,14 @@ test("direct damage API still deals exactly one by default", () => {
   assert.deepEqual(damageBalloon(room, balloon.id), { balloonId: balloon.id, remainingHealth: 2, popped: false });
 });
 
-test("Phase 5 economy starts with canonical coins, income, and next tick", () => {
+test("Phase 5.1 economy starts with slower canonical coins, income, and next tick", () => {
   const room = createBalloonRoom("economy-start");
+  assert.equal(STARTING_COINS, 300);
+  assert.equal(STARTING_INCOME, 30);
+  assert.equal(INCOME_TICK_INTERVAL_MS, 8000);
+  assert.equal(BASIC_BALLOON_INCOME_GAIN, 3);
+  assert.equal(MAX_LAUNCH_QUEUE_SIZE, 10);
+  assert.equal(BASIC_BALLOON_LAUNCH_INTERVAL_MS, 600);
   assert.deepEqual(room.economy, {
     coins: STARTING_COINS,
     income: STARTING_INCOME,
@@ -360,18 +390,17 @@ test("Phase 5 economy starts with canonical coins, income, and next tick", () =>
 
 test("income ticks use deterministic simulation time and catch up exactly", () => {
   const room = createBalloonRoom("income-ticks");
-  room.economy.coins = 200;
-  assert.equal(applyGameAction(room, { type: "APPLY_INCOME_TICK", simulationTimeMs: 4999 }).incomeTicksApplied, 0);
-  assert.equal(room.economy.coins, 200);
-  assert.equal(applyGameAction(room, { type: "APPLY_INCOME_TICK", simulationTimeMs: 5000 }).incomeTicksApplied, 1);
+  assert.equal(applyGameAction(room, { type: "APPLY_INCOME_TICK", simulationTimeMs: 7999 }).incomeTicksApplied, 0);
   assert.equal(room.economy.coins, 300);
-  assert.equal(room.economy.nextIncomeTickAt, 10000);
-  assert.equal(applyGameAction(room, { type: "APPLY_INCOME_TICK", simulationTimeMs: 15000 }).incomeTicksApplied, 2);
-  assert.equal(room.economy.coins, 500);
-  assert.equal(room.economy.nextIncomeTickAt, 20000);
+  assert.equal(applyGameAction(room, { type: "APPLY_INCOME_TICK", simulationTimeMs: 8000 }).incomeTicksApplied, 1);
+  assert.equal(room.economy.coins, 330);
+  assert.equal(room.economy.nextIncomeTickAt, 16000);
+  assert.equal(applyGameAction(room, { type: "APPLY_INCOME_TICK", simulationTimeMs: 24000 }).incomeTicksApplied, 2);
+  assert.equal(room.economy.coins, 390);
+  assert.equal(room.economy.nextIncomeTickAt, 32000);
 });
 
-test("successful sends cost coins, grow income, and create exactly one balloon each", () => {
+test("successful purchases cost coins, grow income, and queue without spawning", () => {
   const sender = createBalloonRoom("economy-sender");
   const target = createBalloonRoom("economy-target");
   sender.economy.coins = 200;
@@ -380,19 +409,23 @@ test("successful sends cost coins, grow income, and create exactly one balloon e
   }
   assert.equal(sender.economy.coins, 200 - 4 * BASIC_BALLOON_COST);
   assert.equal(sender.economy.income, STARTING_INCOME + 4 * BASIC_BALLOON_INCOME_GAIN);
-  assert.equal(target.balloons.length, 4);
+  assert.equal(sender.attack.queue.length, 4);
+  assert.equal(target.balloons.length, 0);
 });
 
-test("five balloon investments compound into the next income tick", () => {
-  const sender = createBalloonRoom("compound-sender");
-  const target = createBalloonRoom("compound-target");
-  for (let sequence = 1; sequence <= 5; sequence += 1) {
+test("four purchases from 100 coins commit exactly and compound on the future tick", () => {
+  const sender = createBalloonRoom("exact-purchase-sender");
+  const target = createBalloonRoom("exact-purchase-target");
+  sender.economy.coins = 100;
+  for (let sequence = 1; sequence <= 4; sequence += 1) {
     assert.equal(applyGameAction(sender, sendAction(target, 1, sequence), target).applied, true);
   }
-  assert.equal(sender.economy.coins, 375);
-  assert.equal(sender.economy.income, 125);
+  assert.equal(sender.economy.coins, 0);
+  assert.equal(sender.economy.income, 42);
+  assert.equal(sender.attack.queue.length, 4);
+  assert.equal(applyGameAction(sender, sendAction(target, 1, 5), target).code, "insufficient_coins");
   applyGameAction(sender, { type: "APPLY_INCOME_TICK", simulationTimeMs: INCOME_TICK_INTERVAL_MS });
-  assert.equal(sender.economy.coins, 500);
+  assert.equal(sender.economy.coins, 42);
 });
 
 test("insufficient send is atomic and never creates a balloon", () => {
@@ -403,7 +436,46 @@ test("insufficient send is atomic and never creates a balloon", () => {
   assert.equal(result.code, "insufficient_coins");
   assert.equal(sender.economy.coins, 20);
   assert.equal(sender.economy.income, STARTING_INCOME);
+  assert.equal(sender.attack.queue.length, 0);
   assert.equal(target.balloons.length, 0);
+});
+
+test("a full launch queue rejects purchases atomically", () => {
+  const sender = createBalloonRoom("full-queue-sender");
+  const target = createBalloonRoom("full-queue-target");
+  sender.economy.coins = 1000;
+  for (let sequence = 1; sequence <= MAX_LAUNCH_QUEUE_SIZE; sequence += 1) {
+    assert.equal(applySend(target, sendAction(target, (sequence % 4) + 1, sequence), sender).applied, true);
+  }
+  const coinsBefore = sender.economy.coins;
+  const incomeBefore = sender.economy.income;
+  const result = applySend(target, sendAction(target, 2, MAX_LAUNCH_QUEUE_SIZE + 1), sender);
+  assert.equal(result.code, "queue_full");
+  assert.equal(sender.attack.queue.length, MAX_LAUNCH_QUEUE_SIZE);
+  assert.equal(sender.economy.coins, coinsBefore);
+  assert.equal(sender.economy.income, incomeBefore);
+});
+
+test("launch queue emits at most one balloon per scheduler action even after a large time jump", () => {
+  const sender = createBalloonRoom("catchup-sender");
+  const target = createBalloonRoom("catchup-target");
+  for (let sequence = 1; sequence <= 3; sequence += 1) applySend(target, sendAction(target, sequence, sequence), sender);
+  assert.ok(applyLaunch(sender, target, 0).launchedBalloon);
+  assert.ok(applyLaunch(sender, target, 5000).launchedBalloon);
+  assert.equal(target.balloons.length, 2);
+  assert.equal(sender.attack.queue.length, 1);
+  assert.equal(sender.attack.nextLaunchAt, 5600);
+});
+
+test("a later burst still respects spacing from the previous launch", () => {
+  const sender = createBalloonRoom("burst-sender");
+  const target = createBalloonRoom("burst-target");
+  applySend(target, sendAction(target, 2, 1), sender);
+  applyLaunch(sender, target, 1000);
+  applySend(target, sendAction(target, 4, 2), sender);
+  assert.equal(applyLaunch(sender, target, 1200).launchedBalloon, undefined);
+  assert.ok(applyLaunch(sender, target, 1600).launchedBalloon);
+  assert.deepEqual(target.balloons.map((balloon) => balloon.spawnLane), [2, 4]);
 });
 
 test("valid wall and nail purchases charge canonical costs", () => {

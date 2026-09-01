@@ -8,7 +8,7 @@ import type { Balloon, BalloonDamageResult, BalloonRoom, BalloonSimulationEvent,
 export type DevBalloonSpawner = { secondsUntilSpawn: number; sequence: number; random: () => number };
 
 export function createBalloonRoom(id: string): BalloonRoom {
-  return { id, economy: createPlayerEconomy(), health: ROOM_MAX_HEALTH, maxHealth: ROOM_MAX_HEALTH, balloons: [], processedSendIds: [], walls: [], nailStrips: [], wallRevision: 0, width: 1, height: 1 };
+  return { id, economy: createPlayerEconomy(), attack: { queue: [], lastLaunchAt: null, nextLaunchAt: null }, health: ROOM_MAX_HEALTH, maxHealth: ROOM_MAX_HEALTH, balloons: [], processedSendIds: [], walls: [], nailStrips: [], wallRevision: 0, width: 1, height: 1 };
 }
 
 export function createBasicBalloon(roomId: string, id: string, spawnLane: SpawnLane, pathBias: PathBias = "left"): Balloon {

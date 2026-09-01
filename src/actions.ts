@@ -1,13 +1,11 @@
 import { placeNailStrip, removeNailStrip } from "./nails.js";
-import { sendBalloon, validateSendBalloon } from "./offense.js";
 import { damageBalloon } from "./simulation.js";
 import type { BalloonRoom, GameAction, GameActionResult } from "./types.js";
 import { placeWall, removeWall, validateWallPlacement } from "./walls.js";
 import { validateNailPlacement } from "./nails.js";
 import { applyIncomeTicks } from "./economy.js";
 import { BASIC_BALLOON_COST, BASIC_BALLOON_INCOME_GAIN, ENTRY_LANES, HORIZONTAL_WALL_COST, NAIL_STRIP_COST, VERTICAL_WALL_COST } from "./constants.js";
-import { findPathToCeiling } from "./pathfinding.js";
-import { getLaneCell } from "./grid.js";
+import { applyLaunchQueue, enqueueBalloon, validateBalloonPurchase } from "./attack.js";
 
 export function applyGameAction(room: BalloonRoom, action: GameAction, targetRoom?: BalloonRoom): GameActionResult {
   if (action.type === "SEND_BALLOON") {
@@ -16,24 +14,25 @@ export function applyGameAction(room: BalloonRoom, action: GameAction, targetRoo
     }
     if (room.health <= 0) return { action: action.type, applied: false, code: "sender_room_closed", message: "Your room is broken" };
     if (!targetRoom) return { action: action.type, applied: false, code: "target_not_found", message: "Target room not found" };
-    const validation = validateSendBalloon(targetRoom, action);
+    const validation = validateBalloonPurchase(room, targetRoom, action);
     if (!validation.valid) return { action: action.type, applied: false, code: validation.code, message: validation.message };
-    const pathBias = action.senderSequence % 2 === 0 ? "right" : "left";
-    if (!findPathToCeiling(getLaneCell(action.lane), targetRoom.walls, pathBias)) {
-      return { action: action.type, applied: false, code: "path_unavailable", message: "No route to the ceiling" };
-    }
     if (room.economy.coins < BASIC_BALLOON_COST) return insufficientCoins(action.type, BASIC_BALLOON_COST);
     room.economy.coins -= BASIC_BALLOON_COST;
     room.economy.income += BASIC_BALLOON_INCOME_GAIN;
-    const result = sendBalloon(targetRoom, action);
-    return result.valid && result.balloon
-      ? { action: action.type, applied: true, code: "valid", message: result.message, spawnedBalloon: result.balloon }
-      : { action: action.type, applied: false, code: result.code, message: result.message };
+    const queuedBalloon = enqueueBalloon(room, action);
+    return { action: action.type, applied: true, code: "valid", message: `Basic Balloon queued for Lane ${action.lane}`, queuedBalloon };
   }
   if (action.type === "APPLY_INCOME_TICK") {
     const result = applyIncomeTicks(room, action.simulationTimeMs);
     return result.valid
       ? { action: action.type, applied: true, code: "valid", message: result.message, incomeTicksApplied: result.ticksApplied }
+      : { action: action.type, applied: false, code: result.code, message: result.message };
+  }
+  if (action.type === "APPLY_LAUNCH_QUEUE") {
+    if (!targetRoom) return { action: action.type, applied: false, code: "target_not_found", message: "Target room not found" };
+    const result = applyLaunchQueue(room, targetRoom, action.simulationTimeMs);
+    return result.valid
+      ? { action: action.type, applied: true, code: "valid", message: result.message, spawnedBalloon: result.balloon, launchedBalloon: result.balloon }
       : { action: action.type, applied: false, code: result.code, message: result.message };
   }
   if (action.type === "POP_BALLOON") {

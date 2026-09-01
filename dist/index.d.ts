@@ -1,4 +1,5 @@
 export * from "./actions.js";
+export * from "./attack.js";
 export * from "./constants.js";
 export * from "./economy.js";
 export * from "./grid.js";

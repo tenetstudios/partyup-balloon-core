@@ -16,8 +16,11 @@ Balloon at the canonical lane entry before normal pathfinding takes over.
 
 Phase 5 adds canonical per-room Coins, Income, deterministic recurring income
 ticks, costed wall/nail placement, and atomic cost-plus-Income Basic Balloon
-sends. `applyGameAction(actorRoom, action, targetRoom?)` charges the actor and
-spawns successful sends in the target; removals and breakage never refund Coins.
+purchases. Phase 5.1 slows the economy and adds a FIFO offensive launch queue:
+`SEND_BALLOON` commits the purchase without spawning, while
+`APPLY_LAUNCH_QUEUE` deploys at most one due entry using canonical simulation
+time and 600 ms spacing. Removals, breakage, and queued purchases never refund
+Coins.
 
 Both PartyUp clients consume an immutable Git commit of this repository so their
 rules cannot drift. Rendering, animation timing, and pointer/touch hit testing stay
