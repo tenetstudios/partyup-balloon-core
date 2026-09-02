@@ -1,4 +1,4 @@
-import type { BalloonRoom, SendBalloonAction, SendBalloonResult, SpawnLane } from "./types.js";
+import type { BalloonRoom, BalloonType, SendBalloonAction, SendBalloonResult, SpawnLane } from "./types.js";
 export type CreateSendBalloonActionInput = {
     matchId: string;
     senderId: string;
@@ -6,6 +6,7 @@ export type CreateSendBalloonActionInput = {
     lane: SpawnLane;
     senderSequence: number;
     sentAt: number;
+    balloonType?: BalloonType;
 };
 export declare function createSendBalloonAction(input: CreateSendBalloonActionInput): SendBalloonAction;
 export declare function createSentBalloonId(input: CreateSendBalloonActionInput): string;

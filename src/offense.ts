@@ -1,6 +1,7 @@
 import { ENTRY_LANES } from "./constants.js";
-import { createBasicBalloon, recalculateBalloonPath } from "./simulation.js";
-import type { BalloonRoom, SendBalloonAction, SendBalloonResult, SpawnLane } from "./types.js";
+import { BALLOON_TYPES } from "./constants.js";
+import { createBalloon, recalculateBalloonPath } from "./simulation.js";
+import type { BalloonRoom, BalloonType, SendBalloonAction, SendBalloonResult, SpawnLane } from "./types.js";
 
 export type CreateSendBalloonActionInput = {
   matchId: string;
@@ -9,12 +10,13 @@ export type CreateSendBalloonActionInput = {
   lane: SpawnLane;
   senderSequence: number;
   sentAt: number;
+  balloonType?: BalloonType;
 };
 
 export function createSendBalloonAction(input: CreateSendBalloonActionInput): SendBalloonAction {
   return {
     type: "SEND_BALLOON",
-    balloonType: "basic",
+    balloonType: input.balloonType ?? "basic",
     lane: input.lane,
     targetRoomId: input.targetRoomId,
     balloonId: createSentBalloonId(input),
@@ -31,9 +33,14 @@ export function createSentBalloonId(input: CreateSendBalloonActionInput): string
     encodeURIComponent(input.matchId),
     encodeURIComponent(input.senderId),
     encodeURIComponent(input.targetRoomId),
+    actionBalloonType(input),
     `lane-${input.lane}`,
     `send-${input.senderSequence}`,
   ].join(":");
+}
+
+function actionBalloonType(input: CreateSendBalloonActionInput): BalloonType {
+  return input.balloonType ?? "basic";
 }
 
 export function validateSendBalloon(room: BalloonRoom, action: SendBalloonAction): SendBalloonResult {
@@ -46,8 +53,8 @@ export function validateSendBalloon(room: BalloonRoom, action: SendBalloonAction
   if (room.health <= 0) {
     return { valid: false, code: "room_closed", message: "Target room is broken" };
   }
-  if (action.balloonType !== "basic") {
-    return { valid: false, code: "invalid_balloon_type", message: "Only Basic Balloons are available" };
+  if (!(action.balloonType in BALLOON_TYPES)) {
+    return { valid: false, code: "invalid_balloon_type", message: "Unknown balloon type" };
   }
   if (!action.balloonId || !action.matchId || !action.senderId) {
     return { valid: false, code: "invalid_identity", message: "Balloon identity is required" };
@@ -62,6 +69,7 @@ export function validateSendBalloon(room: BalloonRoom, action: SendBalloonAction
     lane: action.lane,
     senderSequence: action.senderSequence,
     sentAt: action.sentAt,
+    balloonType: action.balloonType,
   });
   if (action.balloonId !== expectedBalloonId) {
     return { valid: false, code: "invalid_identity", message: "Balloon identity does not match send metadata" };
@@ -69,17 +77,17 @@ export function validateSendBalloon(room: BalloonRoom, action: SendBalloonAction
   if (room.processedSendIds.includes(action.balloonId)) {
     return { valid: false, code: "duplicate_balloon_id", message: "Balloon already sent" };
   }
-  return { valid: true, code: "valid", message: `Basic Balloon sent through Lane ${action.lane}` };
+  return { valid: true, code: "valid", message: `${action.balloonType} Balloon sent through Lane ${action.lane}` };
 }
 
 export function sendBalloon(room: BalloonRoom, action: SendBalloonAction): SendBalloonResult {
   const validation = validateSendBalloon(room, action);
   if (!validation.valid) return validation;
-  const balloon = createBasicBalloon(room.id, action.balloonId, action.lane, action.senderSequence % 2 === 0 ? "right" : "left");
+  const balloon = createBalloon(room.id, action.balloonId, action.balloonType, action.lane, action.senderSequence % 2 === 0 ? "right" : "left", "player", { senderId: action.senderId });
   if (!recalculateBalloonPath(room, balloon)) {
     return { valid: false, code: "path_unavailable", message: "No route to the ceiling" };
   }
   room.processedSendIds.push(action.balloonId);
   room.balloons.push(balloon);
-  return { valid: true, code: "valid", message: `Basic Balloon sent through Lane ${action.lane}`, balloon };
+  return { valid: true, code: "valid", message: `${action.balloonType} Balloon sent through Lane ${action.lane}`, balloon };
 }

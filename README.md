@@ -1,6 +1,6 @@
 # @partyup/balloon-core
 
-Canonical, headless TypeScript rules for PartyUp Balloon Rooms through Phase 5.
+Canonical, headless TypeScript rules for PartyUp Balloon Rooms through Phase 6.
 
 The package owns logical state, constants, movement, route finding, wall validation,
 nail contact, and typed player actions. It intentionally has no React, browser,
@@ -32,3 +32,19 @@ npm test
 ```
 
 Networking and server authority remain explicitly out of scope.
+
+Phase 6 adds a deterministic five-round environmental scheduler shared by both
+clients. Wave balloons carry explicit `wave` source metadata, bypass player
+economy and launch queues, and are delivered to both rooms through reproducible
+lanes. Speed and Heavy Balloons use the same movement, pathfinding, nails,
+manual-pop, and ceiling lifecycle as Basic Balloons, with centralized type
+configuration. Completing Round 3 unlocks Speed purchases; completing Round 4
+unlocks Heavy purchases. A ten-second build countdown runs before Round 1 and
+between every later round. PvP queues remain active during waves and transitions.
+
+Phase 6.2 expands the wall budget to 24 segments and continues PvE indefinitely
+after the five introductory rounds through a deterministic scaling function.
+Nail strips can stack on one wall and atomically trade their durability for
+balloon HP in oldest-first order. Persistent Glue traps cost 40 Coins and apply
+one permanent 0.65 speed multiplier without influencing pathfinding. Glue and
+Nails may coexist on the same wall.

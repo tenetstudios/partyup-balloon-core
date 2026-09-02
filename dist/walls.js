@@ -86,6 +86,7 @@ export function removeWall(room, wallId) {
         return validation;
     room.walls = room.walls.filter((wall) => wall.id !== wallId);
     room.nailStrips = room.nailStrips.filter((nail) => nail.wallSegmentId !== wallId);
+    room.glueTraps = room.glueTraps.filter((glue) => glue.wallSegmentId !== wallId);
     room.wallRevision += 1;
     return validation;
 }

@@ -6,35 +6,58 @@ import {
   BASIC_BALLOON_INCOME_GAIN,
   BASIC_BALLOON_LAUNCH_INTERVAL_MS,
   BASIC_BALLOON_ROOM_DAMAGE,
+  BALLOON_TYPES,
   ENTRY_LANES,
+  HEAVY_BALLOON_COST,
+  HEAVY_BALLOON_HP,
+  HEAVY_BALLOON_INCOME_GAIN,
+  HEAVY_BALLOON_ROOM_DAMAGE,
+  HEAVY_BALLOON_SPEED_MULTIPLIER,
+  GLUE_COST,
+  GLUE_SPEED_MULTIPLIER,
   HORIZONTAL_WALL_COST,
   INCOME_TICK_INTERVAL_MS,
   MAX_NAIL_STRIPS,
+  MAX_WALL_SEGMENTS,
   MAX_LAUNCH_QUEUE_SIZE,
   NAIL_STRIP_COST,
   NAIL_MAX_DURABILITY,
+  PRE_ROUND_COUNTDOWN_MS,
   ROOM_MAX_HEALTH,
+  ROUND_TRANSITION_MS,
+  SPEED_BALLOON_COST,
+  SPEED_BALLOON_HP,
+  SPEED_BALLOON_INCOME_GAIN,
+  SPEED_BALLOON_ROOM_DAMAGE,
+  SPEED_BALLOON_SPEED_MULTIPLIER,
   STARTING_COINS,
   STARTING_INCOME,
   VERTICAL_WALL_COST,
+  WAVE_BALLOON_SPAWN_INTERVAL_MS,
+  WAVE_ROUNDS,
   applyGameAction,
   createBalloonRoom,
   createBasicBalloon,
+  createBalloon,
   createSendBalloonAction,
+  createWaveState,
   createWallSegment,
   damageBalloon,
   findPathToCeiling,
   getCellCenter,
   getLaneCell,
+  getWaveRound,
   getUnsupportedHorizontalWalls,
   hasRequiredRoutes,
   isTraversalBlocked,
   placeNailStrip,
+  placeGlueTrap,
   placeWall,
   recalculateBalloonPath,
   removeNailStrip,
   updateBalloonPosition,
   updateRoomSimulation,
+  updateWaveState,
   validateWallPlacement,
 } from "../dist/index.js";
 
@@ -176,7 +199,9 @@ test("invalid send lane, target, type, identity, metadata, and room state are re
   const sender = createBalloonRoom("invalid-sender");
   assert.equal(applySend(room, sendAction(room, 0, 1), sender).code, "invalid_lane");
   assert.equal(applySend(room, sendAction(room, 1, 2, { targetRoomId: "missing" }), sender).code, "target_not_found");
-  assert.equal(applySend(room, sendAction(room, 1, 3, { balloonType: "heavy" }), sender).code, "invalid_balloon_type");
+  assert.equal(applySend(room, sendAction(room, 1, 3, { balloonType: "unknown" }), sender).code, "invalid_balloon_type");
+  const lockedHeavy = createSendBalloonAction({ matchId: "phase-4-match", senderId: "attacker", targetRoomId: room.id, lane: 1, senderSequence: 30, sentAt: 30000, balloonType: "heavy" });
+  assert.equal(applySend(room, lockedHeavy, sender).code, "balloon_locked");
   assert.equal(applySend(room, sendAction(room, 1, 4, { balloonId: "forged" }), sender).code, "invalid_identity");
   assert.equal(applySend(room, sendAction(room, 1, 0), sender).code, "invalid_metadata");
   room.health = 0;
@@ -194,15 +219,15 @@ test("a launched balloon uses the target room pathfinding", () => {
   assert.ok(result.launchedBalloon.path.some((cell) => cell.column === 1));
 });
 
-test("a launched balloon interacts with existing nails through normal simulation", () => {
+test("a launched balloon resolves consecutive nail damage through normal simulation", () => {
   const room = armedContactRoom("sent-nails");
   const sender = createBalloonRoom("sent-nails-sender");
   assert.equal(applySend(room, sendAction(room, 2, 1), sender).applied, true);
   const result = applyLaunch(sender, room, 0);
-  const events = updateRoomSimulation(room, 1).filter((event) => event.type === "nail_contact");
+  const events = updateRoomSimulation(room, 4).filter((event) => event.type === "nail_contact");
   assert.equal(events.length, 1);
-  assert.equal(result.launchedBalloon.health, BASIC_BALLOON_HP - 1);
-  assert.equal(room.nailStrips[0].durability, NAIL_MAX_DURABILITY - 1);
+  assert.equal(result.launchedBalloon.health, 0);
+  assert.equal(room.nailStrips[0].durability, NAIL_MAX_DURABILITY - BASIC_BALLOON_HP);
 });
 
 test("a wall blocks its represented grid edge", () => {
@@ -253,14 +278,14 @@ test("nails never influence pathfinding", () => {
   assert.deepEqual(after, before);
 });
 
-test("one valid nail contact deals one damage and consumes one durability", () => {
+test("one valid nail contact atomically spends durability against all remaining HP", () => {
   const room = armedContactRoom("contact");
   const balloon = createBasicBalloon(room.id, "balloon", 2);
   room.balloons.push(balloon);
   const events = updateRoomSimulation(room, 1).filter((event) => event.type === "nail_contact");
   assert.equal(events.length, 1);
-  assert.equal(balloon.health, BASIC_BALLOON_HP - 1);
-  assert.equal(room.nailStrips[0].durability, NAIL_MAX_DURABILITY - 1);
+  assert.equal(balloon.health, 0);
+  assert.equal(room.nailStrips[0].durability, NAIL_MAX_DURABILITY - BASIC_BALLOON_HP);
 });
 
 test("continuous contact does not repeatedly damage", () => {
@@ -268,26 +293,20 @@ test("continuous contact does not repeatedly damage", () => {
   const balloon = createBasicBalloon(room.id, "balloon", 2);
   room.balloons.push(balloon);
   updateRoomSimulation(room, 1);
-  updateRoomSimulation(room, 0.25);
-  assert.equal(balloon.health, BASIC_BALLOON_HP - 1);
-  assert.equal(room.nailStrips[0].durability, NAIL_MAX_DURABILITY - 1);
+  const laterEvents = updateRoomSimulation(room, 0.25);
+  assert.equal(balloon.health, 0);
+  assert.equal(laterEvents.filter((event) => event.type === "nail_contact").length, 0);
+  assert.equal(room.nailStrips[0].durability, NAIL_MAX_DURABILITY - BASIC_BALLOON_HP);
 });
 
-test("a genuine later encounter can damage again", () => {
-  const room = createBalloonRoom("repeat");
-  const structure = [
-    wall(room, "vertical", 3, 4), wall(room, "horizontal", 2, 5),
-    wall(room, "vertical", 1, 3), wall(room, "horizontal", 1, 4),
-    wall(room, "horizontal", 0, 4), wall(room, "horizontal", 3, 4),
-  ];
-  for (const segment of structure) assert.equal(placeWall(room, segment).valid, true);
-  placeNailStrip(room, structure[1].id);
-  const balloon = createBasicBalloon(room.id, "balloon", 2, "left");
+test("low nail durability is exhausted atomically while a Heavy survives", () => {
+  const room = armedContactRoom("low-durability", 4);
+  const balloon = createBalloon(room.id, "heavy", "heavy", 2);
   room.balloons.push(balloon);
-  recalculateBalloonPath(room, balloon);
-  const events = updateBalloonPosition(room, balloon, 8).filter((event) => event.type === "nail_contact");
-  assert.equal(events.length, 2);
-  assert.equal(balloon.health, 1);
+  const events = updateRoomSimulation(room, 4).filter((event) => event.type === "nail_contact");
+  assert.equal(events.length, 1);
+  assert.equal(balloon.health, HEAVY_BALLOON_HP - 4);
+  assert.equal(room.nailStrips.length, 0);
 });
 
 test("nails are automatically removed at zero durability", () => {
@@ -323,10 +342,10 @@ test("nail removal preserves the wall and repositioning restores durability", ()
   assert.equal(room.nailStrips[0].status, "active");
 });
 
-test("REMOVE_WALL removes nails first and the wall second", () => {
+test("REMOVE_WALL removes one oldest nail strip before the wall", () => {
   const room = armedContactRoom("remove-action");
   const wallId = room.walls[0].id;
-  assert.equal(applyGameAction(room, { type: "REMOVE_WALL", wallSegmentId: wallId }).message, "Nails removed; wall remains");
+  assert.equal(applyGameAction(room, { type: "REMOVE_WALL", wallSegmentId: wallId }).message, "One Nail Strip removed; wall remains");
   assert.equal(room.walls.length, 1);
   assert.equal(room.nailStrips.length, 0);
   assert.equal(applyGameAction(room, { type: "REMOVE_WALL", wallSegmentId: wallId }).applied, true);
@@ -338,6 +357,87 @@ test("nail inventory is limited to four strips", () => {
   for (let row = 0; row <= MAX_NAIL_STRIPS; row += 1) placeWall(room, wall(room, "vertical", 1, row));
   for (const segment of room.walls.slice(0, MAX_NAIL_STRIPS)) assert.equal(placeNailStrip(room, segment.id).valid, true);
   assert.equal(placeNailStrip(room, room.walls[MAX_NAIL_STRIPS].id).code, "limit_reached");
+});
+
+test("wall inventory allows 24 legal segments and rejects the 25th", () => {
+  assert.equal(MAX_WALL_SEGMENTS, 24);
+  const room = createBalloonRoom("wall-capacity");
+  const candidates = [];
+  for (let gridX = 1; gridX <= 5; gridX += 1) {
+    for (let gridY = 0; gridY < 10; gridY += 1) candidates.push(wall(room, "vertical", gridX, gridY));
+  }
+  for (const segment of candidates.slice(0, MAX_WALL_SEGMENTS)) assert.equal(placeWall(room, segment).valid, true);
+  assert.equal(room.walls.length, 24);
+  assert.equal(placeWall(room, candidates[MAX_WALL_SEGMENTS]).code, "budget_reached");
+});
+
+test("stacked nails preserve identity and consume oldest durability first", () => {
+  const room = armedContactRoom("stacked-nails");
+  const wallId = room.walls[0].id;
+  assert.equal(placeNailStrip(room, wallId).valid, true);
+  assert.equal(placeNailStrip(room, wallId).valid, true);
+  assert.equal(new Set(room.nailStrips.map((nail) => nail.id)).size, 3);
+  const balloon = createBalloon(room.id, "twenty-five-hp", "heavy", 2);
+  balloon.health = 25;
+  balloon.maxHealth = 25;
+  room.balloons.push(balloon);
+  const contacts = updateRoomSimulation(room, 4).filter((event) => event.type === "nail_contact");
+  assert.equal(contacts.length, 3);
+  assert.equal(balloon.health, 0);
+  assert.equal(room.nailStrips.length, 1);
+  assert.equal(room.nailStrips[0].durability, 5);
+  assert.match(room.nailStrips[0].id, /:3$/);
+});
+
+test("Glue permanently applies 65 percent canonical speed only once to every balloon type", () => {
+  assert.equal(GLUE_SPEED_MULTIPLIER, 0.65);
+  for (const balloonType of ["basic", "speed", "heavy"]) {
+    const room = createBalloonRoom(`glue-${balloonType}`);
+    const segment = wall(room, "vertical", 3, 8);
+    placeWall(room, segment);
+    placeGlueTrap(room, segment.id);
+    const balloon = createBalloon(room.id, `glued-${balloonType}`, balloonType, 2);
+    room.balloons.push(balloon);
+    const first = updateRoomSimulation(room, 4).filter((event) => event.type === "glue_contact");
+    assert.equal(first.length, 1);
+    assert.equal(balloon.glued, true);
+    assert.equal(balloon.speed, BALLOON_TYPES[balloonType].speed * GLUE_SPEED_MULTIPLIER);
+    const slowedSpeed = balloon.speed;
+    const repeat = updateRoomSimulation(room, 1).filter((event) => event.type === "glue_contact");
+    assert.equal(repeat.length, 0);
+    assert.equal(balloon.speed, slowedSpeed);
+  }
+});
+
+test("Glue and stacked Nails coexist on one wall and resolve slow before damage", () => {
+  const room = armedContactRoom("glue-and-nails");
+  const wallId = room.walls[0].id;
+  placeNailStrip(room, wallId);
+  placeGlueTrap(room, wallId);
+  const balloon = createBalloon(room.id, "glued-heavy", "heavy", 2);
+  room.balloons.push(balloon);
+  const events = updateRoomSimulation(room, 4);
+  assert.equal(events[0].type, "glue_contact");
+  assert.equal(events.filter((event) => event.type === "nail_contact").length, 1);
+  assert.equal(balloon.glued, true);
+  assert.equal(balloon.health, 0);
+  assert.equal(room.glueTraps.length, 1);
+  assert.equal(room.nailStrips.length, 1);
+});
+
+test("Glue costs 40 Coins and explicit removal preserves nails and wall", () => {
+  assert.equal(GLUE_COST, 40);
+  const room = createBalloonRoom("glue-actions");
+  const segment = wall(room, "vertical", 3, 8);
+  placeWall(room, segment);
+  placeNailStrip(room, segment.id);
+  const before = room.economy.coins;
+  assert.equal(applyGameAction(room, { type: "PLACE_GLUE", wallSegmentId: segment.id }).applied, true);
+  assert.equal(room.economy.coins, before - GLUE_COST);
+  assert.equal(applyGameAction(room, { type: "REMOVE_GLUE", wallSegmentId: segment.id }).applied, true);
+  assert.equal(room.walls.length, 1);
+  assert.equal(room.nailStrips.length, 1);
+  assert.equal(room.economy.coins, before - GLUE_COST);
 });
 
 test("a balloon killed by nails cannot damage room health", () => {
@@ -363,7 +463,7 @@ test("horizontal walls accept nails and use logical cell contact", () => {
   Object.assign(balloon, { x: start.x, y: start.y, currentCell: { column: 1, row: 9 }, targetCell: { column: 2, row: 9 }, pathRevision: room.wallRevision });
   room.balloons.push(balloon);
   assert.equal(updateBalloonPosition(room, balloon, 2).filter((event) => event.type === "nail_contact").length, 1);
-  assert.equal(balloon.health, 2);
+  assert.equal(balloon.health, 0);
 });
 
 test("direct damage API still deals exactly one by default", () => {
@@ -517,7 +617,7 @@ test("wall and nail removal never refund coins and replacement nails cost again"
   assert.equal(room.economy.coins, afterPurchases);
   assert.equal(applyGameAction(room, { type: "PLACE_NAILS", wallSegmentId: segment.id }).applied, true);
   assert.equal(room.economy.coins, afterPurchases - NAIL_STRIP_COST);
-  assert.equal(applyGameAction(room, { type: "REMOVE_WALL", wallSegmentId: segment.id }).message, "Nails removed; wall remains");
+  assert.equal(applyGameAction(room, { type: "REMOVE_WALL", wallSegmentId: segment.id }).message, "One Nail Strip removed; wall remains");
   const beforeWallRemoval = room.economy.coins;
   assert.equal(applyGameAction(room, { type: "REMOVE_WALL", wallSegmentId: segment.id }).applied, true);
   assert.equal(room.economy.coins, beforeWallRemoval);
@@ -538,4 +638,168 @@ test("nail breakage and manual popping never change coins", () => {
   assert.ok(remaining);
   applyGameAction(room, { type: "POP_BALLOON", balloonId: remaining.id });
   assert.equal(room.economy.coins, coinsBeforeBreak);
+});
+
+test("Phase 6 balloon configs centralize distinct HP, speed, damage, cost, and income", () => {
+  assert.equal(BALLOON_TYPES.speed.maxHealth, SPEED_BALLOON_HP);
+  assert.equal(BALLOON_TYPES.speed.speedMultiplier, SPEED_BALLOON_SPEED_MULTIPLIER);
+  assert.equal(BALLOON_TYPES.speed.roomDamage, SPEED_BALLOON_ROOM_DAMAGE);
+  assert.equal(BALLOON_TYPES.speed.cost, SPEED_BALLOON_COST);
+  assert.equal(BALLOON_TYPES.speed.incomeGain, SPEED_BALLOON_INCOME_GAIN);
+  assert.equal(BALLOON_TYPES.heavy.maxHealth, HEAVY_BALLOON_HP);
+  assert.equal(BALLOON_TYPES.heavy.speedMultiplier, HEAVY_BALLOON_SPEED_MULTIPLIER);
+  assert.equal(BALLOON_TYPES.heavy.roomDamage, HEAVY_BALLOON_ROOM_DAMAGE);
+  assert.equal(BALLOON_TYPES.heavy.cost, HEAVY_BALLOON_COST);
+  assert.equal(BALLOON_TYPES.heavy.incomeGain, HEAVY_BALLOON_INCOME_GAIN);
+});
+
+test("all balloon types share movement, manual damage, nails, and ceiling lifecycle", () => {
+  for (const [balloonType, hits, roomDamage] of [["speed", 2, 1], ["heavy", 10, 3]]) {
+    const room = createBalloonRoom(`${balloonType}-manual`);
+    const balloon = createBalloon(room.id, `${balloonType}-balloon`, balloonType, 1);
+    room.balloons.push(balloon);
+    for (let hit = 1; hit <= hits; hit += 1) damageBalloon(room, balloon.id);
+    assert.equal(room.balloons.length, 0);
+
+    const escapeRoom = createBalloonRoom(`${balloonType}-escape`);
+    escapeRoom.balloons.push(createBalloon(escapeRoom.id, `${balloonType}-escape-balloon`, balloonType, 1));
+    updateRoomSimulation(escapeRoom, 40);
+    assert.equal(escapeRoom.health, ROOM_MAX_HEALTH - roomDamage);
+
+    const nailRoom = armedContactRoom(`${balloonType}-nails`);
+    const nailBalloon = createBalloon(nailRoom.id, `${balloonType}-nail-balloon`, balloonType, 2);
+    nailRoom.balloons.push(nailBalloon);
+    updateRoomSimulation(nailRoom, 2);
+    assert.equal(nailBalloon.health, 0);
+    assert.equal(nailRoom.nailStrips.length, hits === NAIL_MAX_DURABILITY ? 0 : 1);
+  }
+});
+
+test("five canonical rounds have the requested prototype compositions", () => {
+  assert.deepEqual(WAVE_ROUNDS.map((round) => round.composition), [
+    [{ balloonType: "basic", count: 20 }],
+    [{ balloonType: "basic", count: 30 }],
+    [{ balloonType: "basic", count: 20 }, { balloonType: "speed", count: 5 }],
+    [{ balloonType: "basic", count: 15 }, { balloonType: "heavy", count: 1 }],
+    [{ balloonType: "basic", count: 20 }, { balloonType: "speed", count: 5 }, { balloonType: "heavy", count: 2 }],
+  ]);
+});
+
+test("Round 6 onward is generated, mixed, deterministic, and progressively harder", () => {
+  const rounds = Array.from({ length: 10 }, (_, index) => getWaveRound(index + 6));
+  assert.ok(rounds.every(Boolean));
+  assert.deepEqual(rounds[0].composition, [
+    { balloonType: "basic", count: 25 },
+    { balloonType: "speed", count: 5 },
+    { balloonType: "heavy", count: 2 },
+  ]);
+  const totals = rounds.map((round) => round.composition.reduce((sum, entry) => sum + entry.count, 0));
+  for (let index = 1; index < totals.length; index += 1) assert.ok(totals[index] > totals[index - 1]);
+  assert.deepEqual(getWaveRound(12), getWaveRound(12));
+});
+
+test("the match and every later round have canonical ten-second build countdowns", () => {
+  assert.equal(PRE_ROUND_COUNTDOWN_MS, 10000);
+  assert.equal(ROUND_TRANSITION_MS, 10000);
+  const rooms = [createBalloonRoom("countdown-a"), createBalloonRoom("countdown-b")];
+  const state = createWaveState(9);
+  assert.equal(state.status, "transition");
+  assert.equal(state.transitionFromRoundId, null);
+  assert.equal(updateWaveState(state, rooms, PRE_ROUND_COUNTDOWN_MS - 1).spawnedBalloons.length, 0);
+  const start = updateWaveState(state, rooms, PRE_ROUND_COUNTDOWN_MS);
+  assert.equal(start.startedRoundId, 1);
+  assert.equal(start.spawnedBalloons.length, 2);
+  assert.equal(state.status, "active");
+  state.spawnedCount = WAVE_ROUNDS[0].composition[0].count;
+  rooms.forEach((room) => { room.balloons = []; });
+  const roundCompletedAt = PRE_ROUND_COUNTDOWN_MS + 1;
+  assert.equal(updateWaveState(state, rooms, roundCompletedAt).completedRoundId, 1);
+  assert.equal(state.transitionEndsAt, roundCompletedAt + ROUND_TRANSITION_MS);
+  assert.equal(updateWaveState(state, rooms, state.transitionEndsAt - 1).startedRoundId, null);
+  assert.equal(updateWaveState(state, rooms, state.transitionEndsAt).startedRoundId, 2);
+});
+
+test("wave scheduler gives both rooms equivalent deterministic pressure without economy changes", () => {
+  const rooms = [createBalloonRoom("wave-a"), createBalloonRoom("wave-b")];
+  const state = createWaveState(17);
+  const economyBefore = rooms.map((room) => ({ ...room.economy }));
+  for (let sequence = 0; sequence < 20; sequence += 1) {
+    const result = updateWaveState(state, rooms, PRE_ROUND_COUNTDOWN_MS + sequence * WAVE_BALLOON_SPAWN_INTERVAL_MS);
+    assert.equal(result.spawnedBalloons.length, 2);
+    assert.equal(result.spawnedBalloons[0].balloonType, "basic");
+    assert.equal(result.spawnedBalloons[0].spawnLane, result.spawnedBalloons[1].spawnLane);
+    assert.equal(result.spawnedBalloons[0].source, "wave");
+    assert.equal(result.spawnedBalloons[0].roundId, 1);
+    assert.equal(result.spawnedBalloons[0].waveSequence, sequence);
+  }
+  assert.deepEqual(rooms.map((room) => room.economy), economyBefore);
+  assert.equal(rooms[0].attack.queue.length, 0);
+  assert.equal(rooms[1].attack.queue.length, 0);
+});
+
+test("round completion ignores player traffic and unlocks only after exposure", () => {
+  const rooms = [createBalloonRoom("progress-a"), createBalloonRoom("progress-b")];
+  const state = createWaveState(3);
+  let time = PRE_ROUND_COUNTDOWN_MS;
+  updateWaveState(state, rooms, time);
+  const drainRound = (roundIndex) => {
+    const total = WAVE_ROUNDS[roundIndex].composition.reduce((sum, entry) => sum + entry.count, 0);
+    for (let sequence = 0; sequence < total; sequence += 1) {
+      updateWaveState(state, rooms, time);
+      for (const room of rooms) room.balloons = room.balloons.filter((balloon) => balloon.source !== "wave");
+      time += WAVE_BALLOON_SPAWN_INTERVAL_MS;
+    }
+    return updateWaveState(state, rooms, time);
+  };
+
+  const playerBalloon = createBalloon(rooms[0].id, "unrelated-player", "basic", 1, "left", "player", { senderId: "player" });
+  rooms[0].balloons.push(playerBalloon);
+  assert.equal(drainRound(0).completedRoundId, 1);
+  assert.equal(rooms[0].balloons.includes(playerBalloon), true);
+  assert.equal(rooms[0].unlockedBalloonTypes.speed, false);
+  time += ROUND_TRANSITION_MS;
+  updateWaveState(state, rooms, time);
+  assert.equal(drainRound(1).completedRoundId, 2);
+  time += ROUND_TRANSITION_MS;
+  updateWaveState(state, rooms, time);
+  assert.equal(rooms[0].unlockedBalloonTypes.speed, false);
+  const roundThree = drainRound(2);
+  assert.equal(roundThree.completedRoundId, 3);
+  assert.equal(roundThree.unlockedBalloonType, "speed");
+  assert.equal(rooms.every((room) => room.unlockedBalloonTypes.speed), true);
+  assert.equal(rooms.every((room) => !room.unlockedBalloonTypes.heavy), true);
+  time += ROUND_TRANSITION_MS;
+  updateWaveState(state, rooms, time);
+  const roundFour = drainRound(3);
+  assert.equal(roundFour.completedRoundId, 4);
+  assert.equal(roundFour.unlockedBalloonType, "heavy");
+  assert.equal(rooms.every((room) => room.unlockedBalloonTypes.heavy), true);
+  time += ROUND_TRANSITION_MS;
+  updateWaveState(state, rooms, time);
+  const roundFive = drainRound(4);
+  assert.equal(roundFive.completedRoundId, 5);
+  assert.equal(roundFive.allWavesComplete, false);
+  assert.equal(state.status, "transition");
+  time += ROUND_TRANSITION_MS;
+  assert.equal(updateWaveState(state, rooms, time).startedRoundId, 6);
+  assert.equal(state.status, "active");
+});
+
+test("mixed unlocked purchases are atomic, economic, FIFO, and launch as selected types", () => {
+  const sender = createBalloonRoom("mixed-sender");
+  const target = createBalloonRoom("mixed-target");
+  sender.unlockedBalloonTypes.speed = true;
+  sender.unlockedBalloonTypes.heavy = true;
+  sender.economy.coins = 500;
+  const types = ["basic", "speed", "heavy"];
+  const lanes = [1, 4, 2];
+  types.forEach((balloonType, index) => {
+    const action = createSendBalloonAction({ matchId: "mixed", senderId: "player", targetRoomId: target.id, lane: lanes[index], senderSequence: index + 1, sentAt: index * 100, balloonType });
+    assert.equal(applyGameAction(sender, action, target).applied, true);
+  });
+  assert.deepEqual(sender.attack.queue.map((queued) => [queued.balloonType, queued.lane]), [["basic", 1], ["speed", 4], ["heavy", 2]]);
+  assert.equal(sender.economy.coins, 500 - BASIC_BALLOON_COST - SPEED_BALLOON_COST - HEAVY_BALLOON_COST);
+  assert.equal(sender.economy.income, STARTING_INCOME + BASIC_BALLOON_INCOME_GAIN + SPEED_BALLOON_INCOME_GAIN + HEAVY_BALLOON_INCOME_GAIN);
+  [0, 600, 1200].forEach((simulationTimeMs) => applyLaunch(sender, target, simulationTimeMs));
+  assert.deepEqual(target.balloons.map((balloon) => [balloon.balloonType, balloon.spawnLane, balloon.source]), [["basic", 1, "player"], ["speed", 4, "player"], ["heavy", 2, "player"]]);
 });

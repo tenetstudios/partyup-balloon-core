@@ -4,8 +4,10 @@ import type { BalloonRoom, GameAction, GameActionResult } from "./types.js";
 import { placeWall, removeWall, validateWallPlacement } from "./walls.js";
 import { validateNailPlacement } from "./nails.js";
 import { applyIncomeTicks } from "./economy.js";
-import { BASIC_BALLOON_COST, BASIC_BALLOON_INCOME_GAIN, ENTRY_LANES, HORIZONTAL_WALL_COST, NAIL_STRIP_COST, VERTICAL_WALL_COST } from "./constants.js";
+import { BALLOON_TYPES, ENTRY_LANES, HORIZONTAL_WALL_COST, NAIL_STRIP_COST, VERTICAL_WALL_COST } from "./constants.js";
 import { applyLaunchQueue, enqueueBalloon, validateBalloonPurchase } from "./attack.js";
+import { placeGlueTrap, removeGlueTrap, validateGluePlacement } from "./glue.js";
+import { GLUE_COST } from "./constants.js";
 
 export function applyGameAction(room: BalloonRoom, action: GameAction, targetRoom?: BalloonRoom): GameActionResult {
   if (action.type === "SEND_BALLOON") {
@@ -16,11 +18,12 @@ export function applyGameAction(room: BalloonRoom, action: GameAction, targetRoo
     if (!targetRoom) return { action: action.type, applied: false, code: "target_not_found", message: "Target room not found" };
     const validation = validateBalloonPurchase(room, targetRoom, action);
     if (!validation.valid) return { action: action.type, applied: false, code: validation.code, message: validation.message };
-    if (room.economy.coins < BASIC_BALLOON_COST) return insufficientCoins(action.type, BASIC_BALLOON_COST);
-    room.economy.coins -= BASIC_BALLOON_COST;
-    room.economy.income += BASIC_BALLOON_INCOME_GAIN;
+    const config = BALLOON_TYPES[action.balloonType];
+    if (room.economy.coins < config.cost) return insufficientCoins(action.type, config.cost);
+    room.economy.coins -= config.cost;
+    room.economy.income += config.incomeGain;
     const queuedBalloon = enqueueBalloon(room, action);
-    return { action: action.type, applied: true, code: "valid", message: `Basic Balloon queued for Lane ${action.lane}`, queuedBalloon };
+    return { action: action.type, applied: true, code: "valid", message: `${action.balloonType} Balloon queued for Lane ${action.lane}`, queuedBalloon };
   }
   if (action.type === "APPLY_INCOME_TICK") {
     const result = applyIncomeTicks(room, action.simulationTimeMs);
@@ -57,8 +60,18 @@ export function applyGameAction(room: BalloonRoom, action: GameAction, targetRoo
     return validationResult(action.type, placeNailStrip(room, action.wallSegmentId));
   }
   if (action.type === "REMOVE_NAILS") return validationResult(action.type, removeNailStrip(room, action.wallSegmentId));
+  if (action.type === "PLACE_GLUE") {
+    const validation = validateGluePlacement(room, action.wallSegmentId);
+    if (!validation.valid) return validationResult(action.type, validation);
+    if (room.economy.coins < GLUE_COST) return insufficientCoins(action.type, GLUE_COST);
+    room.economy.coins -= GLUE_COST;
+    return validationResult(action.type, placeGlueTrap(room, action.wallSegmentId));
+  }
+  if (action.type === "REMOVE_GLUE") return validationResult(action.type, removeGlueTrap(room, action.wallSegmentId));
   const armed = room.nailStrips.some((nail) => nail.wallSegmentId === action.wallSegmentId);
-  if (armed) return validationResult(action.type, removeNailStrip(room, action.wallSegmentId), "Nails removed; wall remains");
+  if (armed) return validationResult(action.type, removeNailStrip(room, action.wallSegmentId), "One Nail Strip removed; wall remains");
+  const glued = room.glueTraps.some((glue) => glue.wallSegmentId === action.wallSegmentId);
+  if (glued) return validationResult(action.type, removeGlueTrap(room, action.wallSegmentId), "Glue removed; wall remains");
   return validationResult(action.type, removeWall(room, action.wallSegmentId));
 }
 

@@ -4,7 +4,20 @@ export type PathBias = "left" | "right";
 export type WallOrientation = "vertical" | "horizontal";
 export type NailStatus = "active" | "broken";
 export type NailStripStatus = NailStatus;
-export type BalloonType = "basic";
+export type BalloonType = "basic" | "speed" | "heavy";
+export type BalloonSource = "wave" | "player";
+
+export type BalloonTypeConfig = {
+  maxHealth: number;
+  speed: number;
+  speedMultiplier: number;
+  radius: number;
+  roomDamage: number;
+  cost: number;
+  incomeGain: number;
+};
+
+export type BalloonUnlockState = Record<BalloonType, boolean>;
 
 export type PlayerEconomy = {
   coins: number;
@@ -42,6 +55,11 @@ export type NailStrip = {
   maxDurability: number;
   status: NailStatus;
 };
+export type GlueTrap = {
+  id: string;
+  roomId: string;
+  wallSegmentId: string;
+};
 
 export type Balloon = {
   id: string;
@@ -53,6 +71,11 @@ export type Balloon = {
   speed: number;
   radius: number;
   roomDamage: number;
+  balloonType: BalloonType;
+  source: BalloonSource;
+  roundId: number | null;
+  waveSequence: number | null;
+  senderId: string | null;
   status: BalloonStatus;
   spawnLane: SpawnLane;
   pathBias: PathBias;
@@ -61,18 +84,21 @@ export type Balloon = {
   path: GridCell[];
   pathRevision: number;
   contactingNailIds: string[];
+  glued: boolean;
 };
 
 export type RoomState = {
   id: string;
   economy: PlayerEconomy;
   attack: PlayerAttackState;
+  unlockedBalloonTypes: BalloonUnlockState;
   health: number;
   maxHealth: number;
   balloons: Balloon[];
   processedSendIds: string[];
   walls: WallSegment[];
   nailStrips: NailStrip[];
+  glueTraps: GlueTrap[];
   wallRevision: number;
   width: number;
   height: number;
@@ -92,13 +118,23 @@ export type BalloonSimulationEvent =
       durabilityBefore: number;
       durabilityAfter: number;
       popped: boolean;
+    }
+  | {
+      type: "glue_contact";
+      balloonId: string;
+      glueId: string;
+      wallSegmentId: string;
+      speedBefore: number;
+      speedAfter: number;
     };
 
 export type BalloonDamageResult = { balloonId: string; remainingHealth: number; popped: boolean };
 export type WallValidationCode = "valid" | "invalid_edge" | "duplicate" | "budget_reached" | "needs_support" | "path_required" | "supporting_span" | "not_found";
 export type WallValidationResult = { valid: boolean; code: WallValidationCode; message: string };
-export type NailValidationCode = "valid" | "wall_required" | "duplicate" | "limit_reached" | "not_found";
+export type NailValidationCode = "valid" | "wall_required" | "limit_reached" | "not_found";
 export type NailValidationResult = { valid: boolean; code: NailValidationCode; message: string };
+export type GlueValidationCode = "valid" | "wall_required" | "duplicate" | "not_found";
+export type GlueValidationResult = { valid: boolean; code: GlueValidationCode; message: string };
 
 export type SendBalloonAction = {
   type: "SEND_BALLOON";
@@ -112,11 +148,44 @@ export type SendBalloonAction = {
   sentAt: number;
 };
 
+export type WaveCompositionEntry = {
+  balloonType: BalloonType;
+  count: number;
+};
+
+export type WaveRoundDefinition = {
+  id: number;
+  composition: readonly WaveCompositionEntry[];
+  unlockAfterCompletion: BalloonType | null;
+};
+
+export type WaveStatus = "active" | "transition" | "complete";
+
+export type WaveState = {
+  seed: number;
+  status: WaveStatus;
+  roundIndex: number;
+  spawnedCount: number;
+  nextSpawnAt: number;
+  transitionEndsAt: number | null;
+  transitionFromRoundId: number | null;
+};
+
+export type WaveUpdateResult = {
+  spawnedBalloons: Balloon[];
+  completedRoundId: number | null;
+  startedRoundId: number | null;
+  unlockedBalloonType: BalloonType | null;
+  allWavesComplete: boolean;
+};
+
 export type GameAction =
   | { type: "PLACE_WALL"; wall: WallSegment }
   | { type: "REMOVE_WALL"; wallSegmentId: string }
   | { type: "PLACE_NAILS"; wallSegmentId: string }
   | { type: "REMOVE_NAILS"; wallSegmentId: string }
+  | { type: "PLACE_GLUE"; wallSegmentId: string }
+  | { type: "REMOVE_GLUE"; wallSegmentId: string }
   | { type: "POP_BALLOON"; balloonId: string }
   | { type: "APPLY_INCOME_TICK"; simulationTimeMs: number }
   | { type: "APPLY_LAUNCH_QUEUE"; simulationTimeMs: number }
@@ -126,7 +195,7 @@ export type GameActionResult =
   | { action: GameAction["type"]; applied: true; code: "valid"; message: string; damage?: BalloonDamageResult; spawnedBalloon?: Balloon; queuedBalloon?: QueuedBalloon; launchedBalloon?: Balloon; incomeTicksApplied?: number }
   | { action: GameAction["type"]; applied: false; code: string; message: string };
 
-export type SendBalloonValidationCode = "valid" | "invalid_lane" | "target_not_found" | "room_closed" | "sender_room_closed" | "invalid_balloon_type" | "duplicate_balloon_id" | "invalid_identity" | "invalid_metadata" | "path_unavailable" | "insufficient_coins" | "queue_full" | "invalid_time";
+export type SendBalloonValidationCode = "valid" | "invalid_lane" | "target_not_found" | "room_closed" | "sender_room_closed" | "invalid_balloon_type" | "balloon_locked" | "duplicate_balloon_id" | "invalid_identity" | "invalid_metadata" | "path_unavailable" | "insufficient_coins" | "queue_full" | "invalid_time";
 export type SendBalloonResult = {
   valid: boolean;
   code: SendBalloonValidationCode;

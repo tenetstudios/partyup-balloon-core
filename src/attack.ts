@@ -1,4 +1,4 @@
-import { BASIC_BALLOON_LAUNCH_INTERVAL_MS, MAX_LAUNCH_QUEUE_SIZE } from "./constants.js";
+import { MAX_LAUNCH_QUEUE_SIZE, PLAYER_BALLOON_LAUNCH_INTERVAL_MS } from "./constants.js";
 import { getLaneCell } from "./grid.js";
 import { sendBalloon, validateSendBalloon } from "./offense.js";
 import { findPathToCeiling } from "./pathfinding.js";
@@ -18,6 +18,9 @@ export function createPlayerAttackState(): PlayerAttackState {
 export function validateBalloonPurchase(senderRoom: BalloonRoom, targetRoom: BalloonRoom, action: SendBalloonAction): SendBalloonResult {
   const validation = validateSendBalloon(targetRoom, action);
   if (!validation.valid) return validation;
+  if (!senderRoom.unlockedBalloonTypes[action.balloonType]) {
+    return { valid: false, code: "balloon_locked", message: `${action.balloonType} Balloon unlocks after its wave` };
+  }
   if (senderRoom.attack.queue.some((queued) => queued.id === action.balloonId)) {
     return { valid: false, code: "duplicate_balloon_id", message: "Balloon already queued" };
   }
@@ -58,7 +61,7 @@ export function applyLaunchQueue(senderRoom: BalloonRoom, targetRoom: BalloonRoo
   if (senderRoom.attack.nextLaunchAt === null) {
     senderRoom.attack.nextLaunchAt = senderRoom.attack.lastLaunchAt === null
       ? simulationTimeMs
-      : Math.max(simulationTimeMs, senderRoom.attack.lastLaunchAt + BASIC_BALLOON_LAUNCH_INTERVAL_MS);
+      : Math.max(simulationTimeMs, senderRoom.attack.lastLaunchAt + PLAYER_BALLOON_LAUNCH_INTERVAL_MS);
   }
   if (simulationTimeMs < senderRoom.attack.nextLaunchAt) {
     return { valid: true, code: "valid", message: "Next launch not due" };
@@ -68,9 +71,9 @@ export function applyLaunchQueue(senderRoom: BalloonRoom, targetRoom: BalloonRoo
   senderRoom.attack.queue.shift();
   senderRoom.attack.lastLaunchAt = simulationTimeMs;
   senderRoom.attack.nextLaunchAt = senderRoom.attack.queue.length > 0
-    ? simulationTimeMs + BASIC_BALLOON_LAUNCH_INTERVAL_MS
+    ? simulationTimeMs + PLAYER_BALLOON_LAUNCH_INTERVAL_MS
     : null;
-  return { valid: true, code: "valid", message: `Basic Balloon launched through Lane ${queued.lane}`, balloon: result.balloon };
+  return { valid: true, code: "valid", message: `${queued.balloonType} Balloon launched through Lane ${queued.lane}`, balloon: result.balloon };
 }
 
 function queuedToSendAction(queued: QueuedBalloon): SendBalloonAction {

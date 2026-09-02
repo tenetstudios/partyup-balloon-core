@@ -5,17 +5,23 @@ export function createNailStrip(roomId, wallSegmentId) {
 export function validateNailPlacement(room, wallSegmentId) {
     if (!room.walls.some((wall) => wall.id === wallSegmentId))
         return { valid: false, code: "wall_required", message: "Nails need an existing wall" };
-    if (room.nailStrips.some((nail) => nail.wallSegmentId === wallSegmentId))
-        return { valid: false, code: "duplicate", message: "Wall already armed" };
     if (room.nailStrips.length >= MAX_NAIL_STRIPS)
         return { valid: false, code: "limit_reached", message: "Nail limit reached" };
-    return { valid: true, code: "valid", message: "Nails attached" };
+    return { valid: true, code: "valid", message: "Nail strip stacked" };
 }
 export function placeNailStrip(room, wallSegmentId) {
     const validation = validateNailPlacement(room, wallSegmentId);
     if (!validation.valid)
         return validation;
-    room.nailStrips.push(createNailStrip(room.id, wallSegmentId));
+    const strip = createNailStrip(room.id, wallSegmentId);
+    const nextSequence = room.nailStrips.reduce((highest, nail) => {
+        if (!nail.id.startsWith(`${strip.id}:`))
+            return highest;
+        const sequence = Number(nail.id.slice(strip.id.length + 1));
+        return Number.isSafeInteger(sequence) ? Math.max(highest, sequence) : highest;
+    }, 0) + 1;
+    strip.id = `${strip.id}:${nextSequence}`;
+    room.nailStrips.push(strip);
     return validation;
 }
 export function removeNailStrip(room, wallSegmentId) {
@@ -29,6 +35,16 @@ export function removeNailStrip(room, wallSegmentId) {
     for (const balloon of room.balloons)
         balloon.contactingNailIds = balloon.contactingNailIds.filter((id) => id !== removed.id);
     return { valid: true, code: "valid", message: "Nails removed" };
+}
+export function removeNailStripById(room, nailStripId) {
+    const nail = room.nailStrips.find((candidate) => candidate.id === nailStripId);
+    if (!nail)
+        return { valid: false, code: "not_found", message: "Nail strip not found" };
+    const index = room.nailStrips.indexOf(nail);
+    room.nailStrips.splice(index, 1);
+    for (const balloon of room.balloons)
+        balloon.contactingNailIds = balloon.contactingNailIds.filter((id) => id !== nail.id);
+    return { valid: true, code: "valid", message: "Nail strip removed" };
 }
 export function wallTouchesCell(wall, cell) {
     if (wall.orientation === "vertical")
