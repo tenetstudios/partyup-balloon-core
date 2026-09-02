@@ -6,6 +6,9 @@ import {
   MAX_WALL_SEGMENTS,
   SPEED_STRUCTURAL_DAMAGE,
   WALL_MAX_INTEGRITY,
+  WALL_REPAIR_AMOUNT,
+  WALL_REPAIR_COST,
+  WALL_REPAIR_THRESHOLD,
 } from "./constants.js";
 import { getLaneCell, isValidWallEdge, SPAWN_LANES } from "./grid.js";
 import { findPathToCeiling } from "./pathfinding.js";
@@ -25,6 +28,19 @@ export type StructuralDamageResult = {
   integrityBefore: number;
   integrityAfter: number;
   destruction: WallDestructionResult | null;
+};
+
+export type WallRepairValidationCode = "valid" | "not_found" | "destroyed" | "above_threshold" | "insufficient_coins";
+
+export type WallRepairResult = {
+  valid: boolean;
+  code: WallRepairValidationCode;
+  message: string;
+  wallSegmentId: string;
+  integrityBefore?: number;
+  integrityAfter?: number;
+  coinsBefore?: number;
+  coinsAfter?: number;
 };
 
 export function getUnsupportedHorizontalWalls(walls: WallSegment[]): WallSegment[] {
@@ -121,6 +137,32 @@ export function damageWallStructure(
   }
   const destruction = destroyWallAndCollapse(room, wallSegmentId);
   return { wallSegmentId, damage, integrityBefore, integrityAfter: 0, destruction };
+}
+
+export function validateWallRepair(room: BalloonRoom, wallSegmentId: string): WallRepairResult {
+  const wall = room.walls.find((candidate) => candidate.id === wallSegmentId);
+  if (!wall) return { valid: false, code: "not_found", message: "Select an existing wall", wallSegmentId };
+  if (wall.integrity <= 0) return { valid: false, code: "destroyed", message: "Destroyed walls cannot be repaired", wallSegmentId };
+  if (wall.integrity > WALL_REPAIR_THRESHOLD) return { valid: false, code: "above_threshold", message: `Repair available at ${WALL_REPAIR_THRESHOLD} integrity or less`, wallSegmentId };
+  if (room.economy.coins < WALL_REPAIR_COST) return { valid: false, code: "insufficient_coins", message: `Not enough Coins (need ${WALL_REPAIR_COST})`, wallSegmentId };
+  return { valid: true, code: "valid", message: `Wall repaired +${WALL_REPAIR_AMOUNT}`, wallSegmentId };
+}
+
+export function repairWall(room: BalloonRoom, wallSegmentId: string): WallRepairResult {
+  const validation = validateWallRepair(room, wallSegmentId);
+  if (!validation.valid) return validation;
+  const wall = room.walls.find((candidate) => candidate.id === wallSegmentId)!;
+  const integrityBefore = wall.integrity;
+  const coinsBefore = room.economy.coins;
+  room.economy.coins -= WALL_REPAIR_COST;
+  wall.integrity = Math.min(wall.maxIntegrity, wall.integrity + WALL_REPAIR_AMOUNT);
+  return {
+    ...validation,
+    integrityBefore,
+    integrityAfter: wall.integrity,
+    coinsBefore,
+    coinsAfter: room.economy.coins,
+  };
 }
 
 export function destroyWallAndCollapse(room: BalloonRoom, wallSegmentId: string): WallDestructionResult | null {

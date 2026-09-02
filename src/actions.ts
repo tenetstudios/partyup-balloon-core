@@ -1,7 +1,7 @@
 import { placeNailStrip, removeNailStrip } from "./nails.js";
 import { damageBalloon } from "./simulation.js";
 import type { BalloonRoom, GameAction, GameActionResult } from "./types.js";
-import { placeWall, removeWall, validateWallPlacement } from "./walls.js";
+import { placeWall, removeWall, repairWall, validateWallPlacement } from "./walls.js";
 import { validateNailPlacement } from "./nails.js";
 import { applyIncomeTicks } from "./economy.js";
 import { BALLOON_TYPES, ENTRY_LANES, HORIZONTAL_WALL_COST, NAIL_STRIP_COST, VERTICAL_WALL_COST } from "./constants.js";
@@ -68,6 +68,7 @@ export function applyGameAction(room: BalloonRoom, action: GameAction, targetRoo
     return validationResult(action.type, placeGlueTrap(room, action.wallSegmentId));
   }
   if (action.type === "REMOVE_GLUE") return validationResult(action.type, removeGlueTrap(room, action.wallSegmentId));
+  if (action.type === "REPAIR_WALL") return validationResult(action.type, repairWall(room, action.wallSegmentId));
   const armed = room.nailStrips.some((nail) => nail.wallSegmentId === action.wallSegmentId);
   if (armed) return validationResult(action.type, removeNailStrip(room, action.wallSegmentId), "One Nail Strip removed; wall remains");
   const glued = room.glueTraps.some((glue) => glue.wallSegmentId === action.wallSegmentId);

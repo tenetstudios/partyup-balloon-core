@@ -209,6 +209,7 @@ export type WaveUpdateResult = {
 export type GameAction =
   | { type: "PLACE_WALL"; wall: WallSegment }
   | { type: "REMOVE_WALL"; wallSegmentId: string }
+  | { type: "REPAIR_WALL"; wallSegmentId: string }
   | { type: "PLACE_NAILS"; wallSegmentId: string }
   | { type: "REMOVE_NAILS"; wallSegmentId: string }
   | { type: "PLACE_GLUE"; wallSegmentId: string }

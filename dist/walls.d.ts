@@ -6,6 +6,17 @@ export type StructuralDamageResult = {
     integrityAfter: number;
     destruction: WallDestructionResult | null;
 };
+export type WallRepairValidationCode = "valid" | "not_found" | "destroyed" | "above_threshold" | "insufficient_coins";
+export type WallRepairResult = {
+    valid: boolean;
+    code: WallRepairValidationCode;
+    message: string;
+    wallSegmentId: string;
+    integrityBefore?: number;
+    integrityAfter?: number;
+    coinsBefore?: number;
+    coinsAfter?: number;
+};
 export declare function getUnsupportedHorizontalWalls(walls: WallSegment[]): WallSegment[];
 export declare function hasRequiredRoutes(room: BalloonRoom, walls: WallSegment[]): boolean;
 export declare function validateWallPlacement(room: BalloonRoom, wall: WallSegment): WallValidationResult;
@@ -13,6 +24,8 @@ export declare function placeWall(room: BalloonRoom, wall: WallSegment): WallVal
 export declare function classifyStructuralImpact(from: GridCell, to: GridCell, wall: WallSegment): StructuralImpact;
 export declare function getStructuralDamage(balloonType: BalloonType, impact: StructuralImpact): number;
 export declare function damageWallStructure(room: BalloonRoom, wallSegmentId: string, damage: number): StructuralDamageResult | null;
+export declare function validateWallRepair(room: BalloonRoom, wallSegmentId: string): WallRepairResult;
+export declare function repairWall(room: BalloonRoom, wallSegmentId: string): WallRepairResult;
 export declare function destroyWallAndCollapse(room: BalloonRoom, wallSegmentId: string): WallDestructionResult | null;
 export declare function validateWallRemoval(room: BalloonRoom, wallId: string): WallValidationResult;
 export declare function removeWall(room: BalloonRoom, wallId: string): WallValidationResult;

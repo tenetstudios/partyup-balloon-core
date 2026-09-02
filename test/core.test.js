@@ -22,6 +22,9 @@ import {
   MAX_NAIL_STRIPS,
   MAX_WALL_SEGMENTS,
   WALL_MAX_INTEGRITY,
+  WALL_REPAIR_AMOUNT,
+  WALL_REPAIR_COST,
+  WALL_REPAIR_THRESHOLD,
   MAX_LAUNCH_QUEUE_SIZE,
   NAIL_STRIP_COST,
   NAIL_MAX_DURABILITY,
@@ -64,6 +67,7 @@ import {
   updateRoomSimulation,
   updateWaveState,
   validateWallPlacement,
+  validateWallRepair,
 } from "../dist/index.js";
 
 function resolveStartingContact(room, balloon) {
@@ -953,4 +957,64 @@ test("destroyed walls free capacity and replacements start at full integrity", (
   assert.equal(placeWall(room, replacement).valid, true);
   assert.equal(replacement.integrity, WALL_MAX_INTEGRITY);
   assert.equal(room.walls.length, 1);
+});
+
+test("Phase 7.1 repair constants define the canonical maintenance economy", () => {
+  assert.equal(WALL_REPAIR_THRESHOLD, 5);
+  assert.equal(WALL_REPAIR_AMOUNT, 5);
+  assert.equal(WALL_REPAIR_COST, 25);
+});
+
+test("repair is unavailable above the threshold and does not spend coins", () => {
+  const room = createBalloonRoom("healthy-repair");
+  const segment = wall(room, "vertical", 3, 9);
+  placeWall(room, segment);
+  segment.integrity = WALL_REPAIR_THRESHOLD + 1;
+  const coinsBefore = room.economy.coins;
+  const result = applyGameAction(room, { type: "REPAIR_WALL", wallSegmentId: segment.id });
+  assert.equal(result.applied, false);
+  assert.equal(result.code, "above_threshold");
+  assert.equal(segment.integrity, 6);
+  assert.equal(room.economy.coins, coinsBefore);
+});
+
+test("repair deducts 25 coins and restores five integrity without changing attachments", () => {
+  const room = createBalloonRoom("paid-repair");
+  const segment = wall(room, "vertical", 3, 9);
+  placeWall(room, segment);
+  placeNailStrip(room, segment.id);
+  placeGlueTrap(room, segment.id);
+  segment.integrity = WALL_REPAIR_THRESHOLD;
+  const nailIds = room.nailStrips.map((nail) => nail.id);
+  const glueIds = room.glueTraps.map((glue) => glue.id);
+  const wallRevision = room.wallRevision;
+  const coinsBefore = room.economy.coins;
+  const result = applyGameAction(room, { type: "REPAIR_WALL", wallSegmentId: segment.id });
+  assert.equal(result.applied, true);
+  assert.equal(segment.integrity, WALL_MAX_INTEGRITY);
+  assert.equal(room.economy.coins, coinsBefore - WALL_REPAIR_COST);
+  assert.deepEqual(room.nailStrips.map((nail) => nail.id), nailIds);
+  assert.deepEqual(room.glueTraps.map((glue) => glue.id), glueIds);
+  assert.equal(room.wallRevision, wallRevision);
+});
+
+test("repair caps at max integrity and rejects missing, destroyed, and unaffordable walls atomically", () => {
+  const room = createBalloonRoom("repair-guards");
+  const segment = wall(room, "vertical", 3, 9);
+  placeWall(room, segment);
+  segment.integrity = 5;
+  segment.maxIntegrity = 8;
+  assert.equal(applyGameAction(room, { type: "REPAIR_WALL", wallSegmentId: segment.id }).applied, true);
+  assert.equal(segment.integrity, 8);
+
+  assert.equal(applyGameAction(room, { type: "REPAIR_WALL", wallSegmentId: "missing-wall" }).code, "not_found");
+  segment.integrity = 0;
+  assert.equal(validateWallRepair(room, segment.id).code, "destroyed");
+
+  segment.integrity = 1;
+  room.economy.coins = WALL_REPAIR_COST - 1;
+  const result = applyGameAction(room, { type: "REPAIR_WALL", wallSegmentId: segment.id });
+  assert.equal(result.code, "insufficient_coins");
+  assert.equal(segment.integrity, 1);
+  assert.equal(room.economy.coins, WALL_REPAIR_COST - 1);
 });

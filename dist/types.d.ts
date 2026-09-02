@@ -223,6 +223,9 @@ export type GameAction = {
     type: "REMOVE_WALL";
     wallSegmentId: string;
 } | {
+    type: "REPAIR_WALL";
+    wallSegmentId: string;
+} | {
     type: "PLACE_NAILS";
     wallSegmentId: string;
 } | {
