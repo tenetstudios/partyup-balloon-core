@@ -965,17 +965,19 @@ test("Phase 7.1 repair constants define the canonical maintenance economy", () =
   assert.equal(WALL_REPAIR_COST, 25);
 });
 
-test("repair is unavailable above the threshold and does not spend coins", () => {
-  const room = createBalloonRoom("healthy-repair");
-  const segment = wall(room, "vertical", 3, 9);
-  placeWall(room, segment);
-  segment.integrity = WALL_REPAIR_THRESHOLD + 1;
-  const coinsBefore = room.economy.coins;
-  const result = applyGameAction(room, { type: "REPAIR_WALL", wallSegmentId: segment.id });
-  assert.equal(result.applied, false);
-  assert.equal(result.code, "above_threshold");
-  assert.equal(segment.integrity, 6);
-  assert.equal(room.economy.coins, coinsBefore);
+test("repair is unavailable for healthy and above-threshold walls without spending coins", () => {
+  for (const integrity of [WALL_MAX_INTEGRITY, WALL_REPAIR_THRESHOLD + 1]) {
+    const room = createBalloonRoom(`healthy-repair-${integrity}`);
+    const segment = wall(room, "vertical", 3, 9);
+    placeWall(room, segment);
+    segment.integrity = integrity;
+    const coinsBefore = room.economy.coins;
+    const result = applyGameAction(room, { type: "REPAIR_WALL", wallSegmentId: segment.id });
+    assert.equal(result.applied, false);
+    assert.equal(result.code, "above_threshold");
+    assert.equal(segment.integrity, integrity);
+    assert.equal(room.economy.coins, coinsBefore);
+  }
 });
 
 test("repair deducts 25 coins and restores five integrity without changing attachments", () => {
@@ -1011,10 +1013,56 @@ test("repair caps at max integrity and rejects missing, destroyed, and unafforda
   segment.integrity = 0;
   assert.equal(validateWallRepair(room, segment.id).code, "destroyed");
 
-  segment.integrity = 1;
-  room.economy.coins = WALL_REPAIR_COST - 1;
+  segment.integrity = 4;
+  room.economy.coins = 20;
   const result = applyGameAction(room, { type: "REPAIR_WALL", wallSegmentId: segment.id });
   assert.equal(result.code, "insufficient_coins");
-  assert.equal(segment.integrity, 1);
-  assert.equal(room.economy.coins, WALL_REPAIR_COST - 1);
+  assert.equal(segment.integrity, 4);
+  assert.equal(room.economy.coins, 20);
+});
+
+test("repair produces canonical results at 5, 4, and 1 integrity", () => {
+  for (const [integrityBefore, integrityAfter] of [[5, 10], [4, 9], [1, 6]]) {
+    const room = createBalloonRoom(`repair-result-${integrityBefore}`);
+    const segment = wall(room, "vertical", 3, 9);
+    placeWall(room, segment);
+    segment.integrity = integrityBefore;
+    room.economy.coins = 100;
+    assert.equal(applyGameAction(room, { type: "REPAIR_WALL", wallSegmentId: segment.id }).applied, true);
+    assert.equal(segment.integrity, integrityAfter);
+    assert.equal(room.economy.coins, 75);
+  }
+});
+
+test("a player can pay repeatedly to maintain a wall after later Heavy pressure", () => {
+  const room = createBalloonRoom("repeated-maintenance");
+  const segment = wall(room, "vertical", 3, 9);
+  placeWall(room, segment);
+  segment.integrity = 4;
+  const coinsBefore = room.economy.coins;
+  assert.equal(applyGameAction(room, { type: "REPAIR_WALL", wallSegmentId: segment.id }).applied, true);
+  assert.equal(segment.integrity, 9);
+  damageWallStructure(room, segment.id, 4);
+  assert.equal(segment.integrity, 5);
+  assert.equal(applyGameAction(room, { type: "REPAIR_WALL", wallSegmentId: segment.id }).applied, true);
+  assert.equal(segment.integrity, 10);
+  assert.equal(room.economy.coins, coinsBefore - WALL_REPAIR_COST * 2);
+});
+
+test("repairing a critical support preserves dependent spans and never heals passively", () => {
+  const room = createBalloonRoom("support-maintenance");
+  const support = wall(room, "vertical", 3, 8);
+  const leftSpan = wall(room, "horizontal", 2, 9);
+  const rightSpan = wall(room, "horizontal", 3, 9);
+  placeWall(room, support);
+  placeWall(room, leftSpan);
+  placeWall(room, rightSpan);
+  support.integrity = 3;
+  const wallIds = room.walls.map((segment) => segment.id);
+  applyGameAction(room, { type: "REPAIR_WALL", wallSegmentId: support.id });
+  assert.equal(support.integrity, 8);
+  assert.deepEqual(room.walls.map((segment) => segment.id), wallIds);
+  assert.equal(getUnsupportedHorizontalWalls(room.walls).length, 0);
+  applyGameAction(room, { type: "APPLY_INCOME_TICK", simulationTimeMs: INCOME_TICK_INTERVAL_MS * 3 });
+  assert.equal(support.integrity, 8);
 });
