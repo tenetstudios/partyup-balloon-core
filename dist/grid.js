@@ -1,4 +1,4 @@
-import { ENTRY_LANE_COLUMNS, ENTRY_LANES, GRID_HEIGHT, GRID_WIDTH } from "./constants.js";
+import { ENTRY_LANE_COLUMNS, ENTRY_LANES, GRID_HEIGHT, GRID_WIDTH, WALL_MAX_INTEGRITY } from "./constants.js";
 export const SPAWN_LANES = [...ENTRY_LANES];
 export function getLaneCell(lane) {
     return { column: ENTRY_LANE_COLUMNS[lane], row: GRID_HEIGHT - 1 };
@@ -22,7 +22,7 @@ export function getWallId(roomId, orientation, gridX, gridY) {
     return `${roomId}:${orientation}:${gridX}:${gridY}`;
 }
 export function createWallSegment(roomId, orientation, gridX, gridY) {
-    return { id: getWallId(roomId, orientation, gridX, gridY), roomId, orientation, gridX, gridY };
+    return { id: getWallId(roomId, orientation, gridX, gridY), roomId, orientation, gridX, gridY, integrity: WALL_MAX_INTEGRITY, maxIntegrity: WALL_MAX_INTEGRITY };
 }
 export function isValidWallEdge(wall) {
     if (wall.orientation === "vertical")

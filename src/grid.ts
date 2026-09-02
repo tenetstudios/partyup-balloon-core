@@ -1,4 +1,4 @@
-import { ENTRY_LANE_COLUMNS, ENTRY_LANES, GRID_HEIGHT, GRID_WIDTH } from "./constants.js";
+import { ENTRY_LANE_COLUMNS, ENTRY_LANES, GRID_HEIGHT, GRID_WIDTH, WALL_MAX_INTEGRITY } from "./constants.js";
 import type { GridCell, GridEdge, SpawnLane, WallOrientation, WallSegment } from "./types.js";
 
 export const SPAWN_LANES: SpawnLane[] = [...ENTRY_LANES];
@@ -31,7 +31,7 @@ export function getWallId(roomId: string, orientation: WallOrientation, gridX: n
 }
 
 export function createWallSegment(roomId: string, orientation: WallOrientation, gridX: number, gridY: number): WallSegment {
-  return { id: getWallId(roomId, orientation, gridX, gridY), roomId, orientation, gridX, gridY };
+  return { id: getWallId(roomId, orientation, gridX, gridY), roomId, orientation, gridX, gridY, integrity: WALL_MAX_INTEGRITY, maxIntegrity: WALL_MAX_INTEGRITY };
 }
 
 export function isValidWallEdge(wall: WallSegment): boolean {

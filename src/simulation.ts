@@ -1,10 +1,11 @@
 import { BALLOON_TYPES, DEV_SPAWN_MAX_SECONDS, DEV_SPAWN_MIN_SECONDS, GLUE_SPEED_MULTIPLIER, MANUAL_POP_DAMAGE, ROOM_MAX_HEALTH } from "./constants.js";
-import { getCellCenter, getLaneCell, isTraversalBlocked, SPAWN_LANES } from "./grid.js";
-import { getNailsTouchingCell, removeNailStripById } from "./nails.js";
+import { getCellCenter, getLaneCell, SPAWN_LANES } from "./grid.js";
+import { getNailsTouchingCell, getWallsTouchingCell, removeNailStripById } from "./nails.js";
 import { getGlueTouchingCell } from "./glue.js";
 import { findPathToCeiling } from "./pathfinding.js";
 import { createPlayerEconomy } from "./economy.js";
-import type { Balloon, BalloonDamageResult, BalloonRoom, BalloonSimulationEvent, BalloonSource, BalloonType, PathBias, SpawnLane } from "./types.js";
+import { classifyStructuralImpact, damageWallStructure, getStructuralDamage } from "./walls.js";
+import type { Balloon, BalloonDamageResult, BalloonRoom, BalloonSimulationEvent, BalloonSource, BalloonType, GridCell, PathBias, SpawnLane } from "./types.js";
 
 export type DevBalloonSpawner = { secondsUntilSpawn: number; sequence: number; random: () => number };
 
@@ -28,7 +29,7 @@ export function createBalloon(
   const config = BALLOON_TYPES[balloonType];
   const currentCell = getLaneCell(spawnLane);
   const position = getCellCenter(currentCell);
-  return { id, roomId, x: position.x, y: position.y, health: config.maxHealth, maxHealth: config.maxHealth, speed: config.speed, radius: config.radius, roomDamage: config.roomDamage, balloonType, source, roundId: metadata.roundId ?? null, waveSequence: metadata.waveSequence ?? null, senderId: metadata.senderId ?? null, status: "active", spawnLane, pathBias, currentCell, targetCell: null, path: [], pathRevision: -1, contactingNailIds: [], glued: false };
+  return { id, roomId, x: position.x, y: position.y, health: config.maxHealth, maxHealth: config.maxHealth, speed: config.speed, radius: config.radius, roomDamage: config.roomDamage, balloonType, source, roundId: metadata.roundId ?? null, waveSequence: metadata.waveSequence ?? null, senderId: metadata.senderId ?? null, status: "active", spawnLane, pathBias, currentCell, targetCell: null, path: [], pathRevision: -1, contactingNailIds: [], contactingWallIds: [], glued: false };
 }
 
 export function recalculateBalloonPath(room: BalloonRoom, balloon: Balloon): boolean {
@@ -43,13 +44,13 @@ export function updateBalloonPosition(room: BalloonRoom, balloon: Balloon, delta
   if (balloon.status !== "active" || deltaSeconds <= 0) return [];
   const events: BalloonSimulationEvent[] = [];
   let remainingSeconds = deltaSeconds;
+  let contactOrigin = getContactOrigin(balloon);
   while (remainingSeconds > 0 && balloon.status === "active") {
+    events.push(...resolveWallContact(room, balloon, contactOrigin));
+    if (balloon.status !== "active") return events;
+    contactOrigin = { ...balloon.currentCell };
     if (balloon.currentCell.row === 0 && !balloon.targetCell) { balloon.y -= balloon.speed * remainingSeconds; return events; }
-    if (balloon.pathRevision !== room.wallRevision && balloon.targetCell && isTraversalBlocked(balloon.currentCell, balloon.targetCell, room.walls)) {
-      balloon.targetCell = { ...balloon.currentCell };
-      balloon.path = [{ ...balloon.currentCell }];
-      balloon.pathRevision = room.wallRevision;
-    }
+    if (balloon.pathRevision !== room.wallRevision && !recalculateBalloonPath(room, balloon)) return events;
     if (!balloon.targetCell && !recalculateBalloonPath(room, balloon)) return events;
     const targetCell = balloon.targetCell;
     if (!targetCell) continue;
@@ -63,40 +64,85 @@ export function updateBalloonPosition(room: BalloonRoom, balloon: Balloon, delta
       balloon.y += ((target.y - balloon.y) / distance) * travelDistance;
       return events;
     }
+    const previousCell = { ...balloon.currentCell };
     balloon.x = target.x;
     balloon.y = target.y;
     balloon.currentCell = { ...targetCell };
     balloon.targetCell = null;
     balloon.path = [];
-    const touchingGlue = getGlueTouchingCell(room, balloon.currentCell);
-    if (!balloon.glued && touchingGlue.length > 0) {
-      const glue = touchingGlue[0]!;
-      const speedBefore = balloon.speed;
-      balloon.glued = true;
-      balloon.speed = BALLOON_TYPES[balloon.balloonType].speed * GLUE_SPEED_MULTIPLIER;
-      events.push({ type: "glue_contact", balloonId: balloon.id, glueId: glue.id, wallSegmentId: glue.wallSegmentId, speedBefore, speedAfter: balloon.speed });
-    }
-    const touchingNails = getNailsTouchingCell(room, balloon.currentCell);
-    const previousContacts = new Set(balloon.contactingNailIds);
-    balloon.contactingNailIds = touchingNails.map((nail) => nail.id);
-    for (const nail of touchingNails) {
-      if (previousContacts.has(nail.id) || nail.status !== "active") continue;
-      const balloonHealthBefore = balloon.health;
-      const durabilityBefore = nail.durability;
-      const damage = Math.min(balloon.health, nail.durability);
-      const result = damageBalloon(room, balloon.id, damage);
-      if (!result) continue;
-      nail.durability = Math.max(0, nail.durability - damage);
-      if (nail.durability === 0) {
-        nail.status = "broken";
-        removeNailStripById(room, nail.id);
-      }
-      events.push({ type: "nail_contact", balloonId: balloon.id, nailStripId: nail.id, wallSegmentId: nail.wallSegmentId, balloonHealthBefore, balloonHealthAfter: result.remainingHealth, durabilityBefore, durabilityAfter: nail.durability, popped: result.popped });
-      if (result.popped) return events;
-    }
     remainingSeconds -= distance / movementSpeed;
+    contactOrigin = previousCell;
   }
   return events;
+}
+
+function resolveWallContact(room: BalloonRoom, balloon: Balloon, movementFrom: GridCell): BalloonSimulationEvent[] {
+  const events: BalloonSimulationEvent[] = [];
+  const touchingWalls = getWallsTouchingCell(room, balloon.currentCell);
+  const touchingWallIds = touchingWalls.map((wall) => wall.id);
+  const previousWallContacts = new Set(balloon.contactingWallIds);
+  balloon.contactingWallIds = touchingWallIds;
+
+  const touchingGlue = getGlueTouchingCell(room, balloon.currentCell);
+  if (!balloon.glued && touchingGlue.length > 0) {
+    const glue = touchingGlue[0]!;
+    const speedBefore = balloon.speed;
+    balloon.glued = true;
+    balloon.speed = BALLOON_TYPES[balloon.balloonType].speed * GLUE_SPEED_MULTIPLIER;
+    events.push({ type: "glue_contact", balloonId: balloon.id, glueId: glue.id, wallSegmentId: glue.wallSegmentId, speedBefore, speedAfter: balloon.speed });
+  }
+
+  const touchingNails = getNailsTouchingCell(room, balloon.currentCell);
+  const previousNailContacts = new Set(balloon.contactingNailIds);
+  balloon.contactingNailIds = touchingNails.map((nail) => nail.id);
+  for (const nail of touchingNails) {
+    if (previousNailContacts.has(nail.id) || nail.status !== "active") continue;
+    const balloonHealthBefore = balloon.health;
+    const durabilityBefore = nail.durability;
+    const damage = Math.min(balloon.health, nail.durability);
+    const result = damageBalloon(room, balloon.id, damage);
+    if (!result) continue;
+    nail.durability = Math.max(0, nail.durability - damage);
+    if (nail.durability === 0) {
+      nail.status = "broken";
+      removeNailStripById(room, nail.id);
+    }
+    events.push({ type: "nail_contact", balloonId: balloon.id, nailStripId: nail.id, wallSegmentId: nail.wallSegmentId, balloonHealthBefore, balloonHealthAfter: result.remainingHealth, durabilityBefore, durabilityAfter: nail.durability, popped: result.popped });
+    if (result.popped) return events;
+  }
+
+  if (balloon.balloonType !== "heavy") return events;
+  for (const wall of touchingWalls) {
+    if (previousWallContacts.has(wall.id) || !room.walls.some((candidate) => candidate.id === wall.id)) continue;
+    const impact = classifyStructuralImpact(movementFrom, balloon.currentCell, wall);
+    const damage = getStructuralDamage(balloon.balloonType, impact);
+    const result = damageWallStructure(room, wall.id, damage);
+    if (!result) continue;
+    events.push({
+      type: "wall_damage",
+      balloonId: balloon.id,
+      wallSegmentId: wall.id,
+      impact,
+      damage,
+      integrityBefore: result.integrityBefore,
+      integrityAfter: result.integrityAfter,
+      destroyed: result.destruction !== null,
+    });
+    if (result.destruction) {
+      events.push({ type: "wall_destroyed", balloonId: balloon.id, wall: result.destruction.destroyedWall, collapsedWalls: result.destruction.collapsedWalls, removedNailStripIds: result.destruction.removedNailStripIds, removedGlueIds: result.destruction.removedGlueIds });
+    }
+  }
+  return events;
+}
+
+function getContactOrigin(balloon: Balloon): GridCell {
+  if (balloon.targetCell) {
+    return {
+      column: balloon.currentCell.column - (balloon.targetCell.column - balloon.currentCell.column),
+      row: balloon.currentCell.row - (balloon.targetCell.row - balloon.currentCell.row),
+    };
+  }
+  return { column: balloon.currentCell.column, row: balloon.currentCell.row + 1 };
 }
 
 export function updateRoomSimulation(room: BalloonRoom, deltaSeconds: number): BalloonSimulationEvent[] {

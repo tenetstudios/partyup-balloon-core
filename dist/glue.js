@@ -25,6 +25,6 @@ export function removeGlueTrap(room, wallSegmentId) {
 }
 export function getGlueTouchingCell(room, cell) {
     const wallIds = new Set(room.walls.filter((wall) => wallTouchesCell(wall, cell)).map((wall) => wall.id));
-    return room.glueTraps.filter((glue) => wallIds.has(glue.wallSegmentId));
+    return room.glueTraps.filter((glue) => wallIds.has(glue.wallSegmentId)).sort((first, second) => first.id.localeCompare(second.id));
 }
 //# sourceMappingURL=glue.js.map

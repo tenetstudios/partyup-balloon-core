@@ -27,5 +27,5 @@ export function removeGlueTrap(room: BalloonRoom, wallSegmentId: string): GlueVa
 
 export function getGlueTouchingCell(room: BalloonRoom, cell: GridCell): GlueTrap[] {
   const wallIds = new Set(room.walls.filter((wall: WallSegment) => wallTouchesCell(wall, cell)).map((wall) => wall.id));
-  return room.glueTraps.filter((glue) => wallIds.has(glue.wallSegmentId));
+  return room.glueTraps.filter((glue) => wallIds.has(glue.wallSegmentId)).sort((first, second) => first.id.localeCompare(second.id));
 }

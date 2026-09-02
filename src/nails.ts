@@ -50,6 +50,14 @@ export function wallTouchesCell(wall: WallSegment, cell: GridCell): boolean {
 }
 
 export function getNailsTouchingCell(room: BalloonRoom, cell: GridCell): NailStrip[] {
-  const wallIds = new Set(room.walls.filter((wall) => wallTouchesCell(wall, cell)).map((wall) => wall.id));
-  return room.nailStrips.filter((nail) => wallIds.has(nail.wallSegmentId));
+  const wallIds = new Set(getWallsTouchingCell(room, cell).map((wall) => wall.id));
+  return room.nailStrips.filter((nail) => wallIds.has(nail.wallSegmentId)).sort((first, second) => first.id.localeCompare(second.id));
+}
+
+export function getWallsTouchingCell(room: BalloonRoom, cell: GridCell): WallSegment[] {
+  return room.walls.filter((wall) => wallTouchesCell(wall, cell)).sort(compareWalls);
+}
+
+function compareWalls(first: WallSegment, second: WallSegment): number {
+  return first.gridY - second.gridY || first.gridX - second.gridX || first.orientation.localeCompare(second.orientation) || first.id.localeCompare(second.id);
 }

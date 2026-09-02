@@ -15,10 +15,13 @@ import {
   HEAVY_BALLOON_SPEED_MULTIPLIER,
   GLUE_COST,
   GLUE_SPEED_MULTIPLIER,
+  HEAVY_DIRECT_STRUCTURAL_DAMAGE,
+  HEAVY_GLANCING_STRUCTURAL_DAMAGE,
   HORIZONTAL_WALL_COST,
   INCOME_TICK_INTERVAL_MS,
   MAX_NAIL_STRIPS,
   MAX_WALL_SEGMENTS,
+  WALL_MAX_INTEGRITY,
   MAX_LAUNCH_QUEUE_SIZE,
   NAIL_STRIP_COST,
   NAIL_MAX_DURABILITY,
@@ -36,6 +39,7 @@ import {
   WAVE_BALLOON_SPAWN_INTERVAL_MS,
   WAVE_ROUNDS,
   applyGameAction,
+  classifyStructuralImpact,
   createBalloonRoom,
   createBasicBalloon,
   createBalloon,
@@ -43,6 +47,7 @@ import {
   createWaveState,
   createWallSegment,
   damageBalloon,
+  damageWallStructure,
   findPathToCeiling,
   getCellCenter,
   getLaneCell,
@@ -60,6 +65,11 @@ import {
   updateWaveState,
   validateWallPlacement,
 } from "../dist/index.js";
+
+function resolveStartingContact(room, balloon) {
+  room.balloons.push(balloon);
+  return updateBalloonPosition(room, balloon, 0.001);
+}
 
 const wall = (room, orientation, gridX, gridY) => createWallSegment(room.id, orientation, gridX, gridY);
 
@@ -802,4 +812,145 @@ test("mixed unlocked purchases are atomic, economic, FIFO, and launch as selecte
   assert.equal(sender.economy.income, STARTING_INCOME + BASIC_BALLOON_INCOME_GAIN + SPEED_BALLOON_INCOME_GAIN + HEAVY_BALLOON_INCOME_GAIN);
   [0, 600, 1200].forEach((simulationTimeMs) => applyLaunch(sender, target, simulationTimeMs));
   assert.deepEqual(target.balloons.map((balloon) => [balloon.balloonType, balloon.spawnLane, balloon.source]), [["basic", 1, "player"], ["speed", 4, "player"], ["heavy", 2, "player"]]);
+});
+
+test("Phase 7 walls start at canonical full integrity", () => {
+  const room = createBalloonRoom("integrity-start");
+  const segment = wall(room, "vertical", 3, 8);
+  assert.equal(segment.integrity, WALL_MAX_INTEGRITY);
+  assert.equal(segment.maxIntegrity, WALL_MAX_INTEGRITY);
+  assert.equal(placeWall(room, segment).valid, true);
+  assert.deepEqual([room.walls[0].integrity, room.walls[0].maxIntegrity], [10, 10]);
+});
+
+test("Basic and Speed contacts never damage wall structure", () => {
+  for (const balloonType of ["basic", "speed"]) {
+    const room = createBalloonRoom(`no-structure-${balloonType}`);
+    const segment = wall(room, "horizontal", 2, 9);
+    placeWall(room, wall(room, "vertical", 3, 8));
+    placeWall(room, segment);
+    resolveStartingContact(room, createBalloon(room.id, `${balloonType}-contact`, balloonType, 2));
+    assert.equal(segment.integrity, WALL_MAX_INTEGRITY);
+  }
+});
+
+test("Heavy direct and glancing contacts use generalized movement orientation", () => {
+  const directRoom = createBalloonRoom("direct-impact");
+  placeWall(directRoom, wall(directRoom, "vertical", 3, 8));
+  const horizontal = wall(directRoom, "horizontal", 2, 9);
+  placeWall(directRoom, horizontal);
+  const directEvents = resolveStartingContact(directRoom, createBalloon(directRoom.id, "direct-heavy", "heavy", 2));
+  const direct = directEvents.find((event) => event.type === "wall_damage" && event.wallSegmentId === horizontal.id);
+  assert.equal(direct?.impact, "direct");
+  assert.equal(direct?.damage, HEAVY_DIRECT_STRUCTURAL_DAMAGE);
+  assert.equal(horizontal.integrity, 8);
+
+  const glancingRoom = createBalloonRoom("glancing-impact");
+  const vertical = wall(glancingRoom, "vertical", 3, 9);
+  placeWall(glancingRoom, vertical);
+  const glancingEvents = resolveStartingContact(glancingRoom, createBalloon(glancingRoom.id, "glancing-heavy", "heavy", 2));
+  const glancing = glancingEvents.find((event) => event.type === "wall_damage" && event.wallSegmentId === vertical.id);
+  assert.equal(glancing?.impact, "glancing");
+  assert.equal(glancing?.damage, HEAVY_GLANCING_STRUCTURAL_DAMAGE);
+  assert.equal(vertical.integrity, 9);
+
+  assert.equal(
+    classifyStructuralImpact(
+      { column: 1, row: 5 },
+      { column: 2, row: 5 },
+      wall(glancingRoom, "vertical", 3, 5),
+    ),
+    "direct",
+  );
+});
+
+test("a horizontal wall is destroyed after five direct Heavy encounters with no refund", () => {
+  const room = createBalloonRoom("five-directs");
+  placeWall(room, wall(room, "vertical", 3, 8));
+  const horizontal = wall(room, "horizontal", 2, 9);
+  placeWall(room, horizontal);
+  const coinsBefore = room.economy.coins;
+  for (let impact = 1; impact <= 5; impact += 1) {
+    resolveStartingContact(room, createBalloon(room.id, `heavy-${impact}`, "heavy", 2));
+    assert.equal(horizontal.integrity, Math.max(0, 10 - impact * 2));
+  }
+  assert.equal(room.walls.some((candidate) => candidate.id === horizontal.id), false);
+  assert.equal(room.economy.coins, coinsBefore);
+});
+
+test("wall destruction removes attachments and deterministically collapses unsupported spans", () => {
+  const room = createBalloonRoom("support-collapse");
+  const support = wall(room, "vertical", 3, 8);
+  const spans = [1, 2, 3, 4].map((gridX) => wall(room, "horizontal", gridX, 9));
+  placeWall(room, support);
+  for (const index of [1, 0, 2, 3]) assert.equal(placeWall(room, spans[index]).valid, true);
+  placeNailStrip(room, support.id);
+  placeGlueTrap(room, support.id);
+  placeNailStrip(room, spans[1].id);
+  placeGlueTrap(room, spans[1].id);
+  const coinsBefore = room.economy.coins;
+  const result = damageWallStructure(room, support.id, WALL_MAX_INTEGRITY);
+  assert.ok(result?.destruction);
+  assert.deepEqual(result.destruction.collapsedWalls.map((wall) => wall.id), spans.map((wall) => wall.id));
+  assert.equal(room.walls.length, 0);
+  assert.equal(room.nailStrips.length, 0);
+  assert.equal(room.glueTraps.length, 0);
+  assert.equal(room.economy.coins, coinsBefore);
+  assert.equal(getUnsupportedHorizontalWalls(room.walls).length, 0);
+});
+
+test("Nails kill before Heavy structure damage, while a surviving Heavy still impacts", () => {
+  const killedRoom = createBalloonRoom("dead-heavy-order");
+  placeWall(killedRoom, wall(killedRoom, "vertical", 3, 8));
+  const lethalWall = wall(killedRoom, "horizontal", 2, 9);
+  placeWall(killedRoom, lethalWall);
+  placeNailStrip(killedRoom, lethalWall.id);
+  const killedEvents = resolveStartingContact(killedRoom, createBalloon(killedRoom.id, "dead-heavy", "heavy", 2));
+  assert.equal(killedEvents.some((event) => event.type === "nail_contact" && event.popped), true);
+  assert.equal(killedEvents.some((event) => event.type === "wall_damage"), false);
+  assert.equal(lethalWall.integrity, WALL_MAX_INTEGRITY);
+
+  const survivorRoom = createBalloonRoom("surviving-heavy-order");
+  placeWall(survivorRoom, wall(survivorRoom, "vertical", 3, 8));
+  const armedWall = wall(survivorRoom, "horizontal", 2, 9);
+  placeWall(survivorRoom, armedWall);
+  placeGlueTrap(survivorRoom, armedWall.id);
+  placeNailStrip(survivorRoom, armedWall.id);
+  survivorRoom.nailStrips[0].durability = 4;
+  const survivor = createBalloon(survivorRoom.id, "surviving-heavy", "heavy", 2);
+  const survivorEvents = resolveStartingContact(survivorRoom, survivor);
+  assert.deepEqual(survivorEvents.map((event) => event.type).slice(0, 3), ["glue_contact", "nail_contact", "wall_damage"]);
+  assert.equal(survivor.health, 6);
+  assert.equal(armedWall.integrity, 8);
+});
+
+test("PvE and player Heavy balloons use identical structural rules and wall changes invalidate live paths", () => {
+  for (const source of ["wave", "player"]) {
+    const room = createBalloonRoom(`source-${source}`);
+    placeWall(room, wall(room, "vertical", 3, 8));
+    const segment = wall(room, "horizontal", 2, 9);
+    placeWall(room, segment);
+    const observer = createBasicBalloon(room.id, `${source}-observer`, 1);
+    recalculateBalloonPath(room, observer);
+    room.balloons.push(observer);
+    const heavy = createBalloon(room.id, `${source}-heavy`, "heavy", 2, "left", source, source === "wave" ? { roundId: 4, waveSequence: 0 } : { senderId: "attacker" });
+    resolveStartingContact(room, heavy);
+    assert.equal(segment.integrity, 8);
+    damageWallStructure(room, segment.id, 8);
+    assert.equal(observer.pathRevision, -1);
+    updateBalloonPosition(room, observer, 0.001);
+    assert.equal(observer.pathRevision, room.wallRevision);
+  }
+});
+
+test("destroyed walls free capacity and replacements start at full integrity", () => {
+  const room = createBalloonRoom("rebuild");
+  const segment = wall(room, "vertical", 3, 9);
+  placeWall(room, segment);
+  damageWallStructure(room, segment.id, WALL_MAX_INTEGRITY);
+  assert.equal(room.walls.length, 0);
+  const replacement = wall(room, "vertical", 3, 9);
+  assert.equal(placeWall(room, replacement).valid, true);
+  assert.equal(replacement.integrity, WALL_MAX_INTEGRITY);
+  assert.equal(room.walls.length, 1);
 });

@@ -52,7 +52,13 @@ export function wallTouchesCell(wall, cell) {
     return wall.gridX === cell.column && (cell.row === wall.gridY - 1 || cell.row === wall.gridY);
 }
 export function getNailsTouchingCell(room, cell) {
-    const wallIds = new Set(room.walls.filter((wall) => wallTouchesCell(wall, cell)).map((wall) => wall.id));
-    return room.nailStrips.filter((nail) => wallIds.has(nail.wallSegmentId));
+    const wallIds = new Set(getWallsTouchingCell(room, cell).map((wall) => wall.id));
+    return room.nailStrips.filter((nail) => wallIds.has(nail.wallSegmentId)).sort((first, second) => first.id.localeCompare(second.id));
+}
+export function getWallsTouchingCell(room, cell) {
+    return room.walls.filter((wall) => wallTouchesCell(wall, cell)).sort(compareWalls);
+}
+function compareWalls(first, second) {
+    return first.gridY - second.gridY || first.gridX - second.gridX || first.orientation.localeCompare(second.orientation) || first.id.localeCompare(second.id);
 }
 //# sourceMappingURL=nails.js.map

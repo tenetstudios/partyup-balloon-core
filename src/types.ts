@@ -2,6 +2,7 @@ export type BalloonStatus = "active" | "popped" | "escaped";
 export type SpawnLane = 1 | 2 | 3 | 4;
 export type PathBias = "left" | "right";
 export type WallOrientation = "vertical" | "horizontal";
+export type StructuralImpact = "direct" | "glancing";
 export type NailStatus = "active" | "broken";
 export type NailStripStatus = NailStatus;
 export type BalloonType = "basic" | "speed" | "heavy";
@@ -46,7 +47,7 @@ export type GridPosition = { column: number; row: number };
 export type GridCell = GridPosition;
 export type GridEdge = { orientation: WallOrientation; gridX: number; gridY: number };
 
-export type WallSegment = GridEdge & { id: string; roomId: string };
+export type WallSegment = GridEdge & { id: string; roomId: string; integrity: number; maxIntegrity: number };
 export type NailStrip = {
   id: string;
   roomId: string;
@@ -84,6 +85,7 @@ export type Balloon = {
   path: GridCell[];
   pathRevision: number;
   contactingNailIds: string[];
+  contactingWallIds: string[];
   glued: boolean;
 };
 
@@ -126,7 +128,32 @@ export type BalloonSimulationEvent =
       wallSegmentId: string;
       speedBefore: number;
       speedAfter: number;
+    }
+  | {
+      type: "wall_damage";
+      balloonId: string;
+      wallSegmentId: string;
+      impact: StructuralImpact;
+      damage: number;
+      integrityBefore: number;
+      integrityAfter: number;
+      destroyed: boolean;
+    }
+  | {
+      type: "wall_destroyed";
+      balloonId: string;
+      wall: WallSegment;
+      collapsedWalls: WallSegment[];
+      removedNailStripIds: string[];
+      removedGlueIds: string[];
     };
+
+export type WallDestructionResult = {
+  destroyedWall: WallSegment;
+  collapsedWalls: WallSegment[];
+  removedNailStripIds: string[];
+  removedGlueIds: string[];
+};
 
 export type BalloonDamageResult = { balloonId: string; remainingHealth: number; popped: boolean };
 export type WallValidationCode = "valid" | "invalid_edge" | "duplicate" | "budget_reached" | "needs_support" | "path_required" | "supporting_span" | "not_found";

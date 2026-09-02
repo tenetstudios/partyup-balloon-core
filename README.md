@@ -1,6 +1,6 @@
 # @partyup/balloon-core
 
-Canonical, headless TypeScript rules for PartyUp Balloon Rooms through Phase 6.
+Canonical, headless TypeScript rules for PartyUp Balloon Rooms through Phase 7.
 
 The package owns logical state, constants, movement, route finding, wall validation,
 nail contact, and typed player actions. It intentionally has no React, browser,
@@ -48,3 +48,17 @@ Nail strips can stack on one wall and atomically trade their durability for
 balloon HP in oldest-first order. Persistent Glue traps cost 40 Coins and apply
 one permanent 0.65 speed multiplier without influencing pathfinding. Glue and
 Nails may coexist on the same wall.
+
+Phase 7 gives every wall 10 structural integrity. Only Heavy Balloons damage
+structure: an impact directly opposed by the wall orientation deals 2 damage,
+while a parallel/glancing interaction deals 1. The classification uses the
+balloon movement vector, so horizontal movement into a vertical wall is also a
+direct impact. Each wall contact resolves once rather than once per frame.
+
+Wall contact order is deterministic: Glue, stacked Nails in ID order, then Heavy
+structural damage. A Heavy killed by Nails does not damage the wall. A destroyed
+wall is removed immediately with its Nails and Glue, gives no refund, and causes
+unsupported horizontal spans to collapse in stable grid order until the
+structure is valid. Collapsed spans also lose every attachment without refund.
+Every structural removal advances the wall revision and invalidates active paths
+so the next simulation step routes against the surviving structure.

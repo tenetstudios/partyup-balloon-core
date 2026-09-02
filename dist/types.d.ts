@@ -2,6 +2,7 @@ export type BalloonStatus = "active" | "popped" | "escaped";
 export type SpawnLane = 1 | 2 | 3 | 4;
 export type PathBias = "left" | "right";
 export type WallOrientation = "vertical" | "horizontal";
+export type StructuralImpact = "direct" | "glancing";
 export type NailStatus = "active" | "broken";
 export type NailStripStatus = NailStatus;
 export type BalloonType = "basic" | "speed" | "heavy";
@@ -49,6 +50,8 @@ export type GridEdge = {
 export type WallSegment = GridEdge & {
     id: string;
     roomId: string;
+    integrity: number;
+    maxIntegrity: number;
 };
 export type NailStrip = {
     id: string;
@@ -86,6 +89,7 @@ export type Balloon = {
     path: GridCell[];
     pathRevision: number;
     contactingNailIds: string[];
+    contactingWallIds: string[];
     glued: boolean;
 };
 export type RoomState = {
@@ -129,6 +133,28 @@ export type BalloonSimulationEvent = {
     wallSegmentId: string;
     speedBefore: number;
     speedAfter: number;
+} | {
+    type: "wall_damage";
+    balloonId: string;
+    wallSegmentId: string;
+    impact: StructuralImpact;
+    damage: number;
+    integrityBefore: number;
+    integrityAfter: number;
+    destroyed: boolean;
+} | {
+    type: "wall_destroyed";
+    balloonId: string;
+    wall: WallSegment;
+    collapsedWalls: WallSegment[];
+    removedNailStripIds: string[];
+    removedGlueIds: string[];
+};
+export type WallDestructionResult = {
+    destroyedWall: WallSegment;
+    collapsedWalls: WallSegment[];
+    removedNailStripIds: string[];
+    removedGlueIds: string[];
 };
 export type BalloonDamageResult = {
     balloonId: string;

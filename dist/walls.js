@@ -1,4 +1,4 @@
-import { MAX_HORIZONTAL_SUPPORT_DISTANCE, MAX_WALL_SEGMENTS } from "./constants.js";
+import { BASIC_STRUCTURAL_DAMAGE, HEAVY_DIRECT_STRUCTURAL_DAMAGE, HEAVY_GLANCING_STRUCTURAL_DAMAGE, MAX_HORIZONTAL_SUPPORT_DISTANCE, MAX_WALL_SEGMENTS, SPEED_STRUCTURAL_DAMAGE, WALL_MAX_INTEGRITY, } from "./constants.js";
 import { getLaneCell, isValidWallEdge, SPAWN_LANES } from "./grid.js";
 import { findPathToCeiling } from "./pathfinding.js";
 export function getUnsupportedHorizontalWalls(walls) {
@@ -68,9 +68,75 @@ export function placeWall(room, wall) {
     const validation = validateWallPlacement(room, wall);
     if (!validation.valid)
         return validation;
+    wall.integrity = WALL_MAX_INTEGRITY;
+    wall.maxIntegrity = WALL_MAX_INTEGRITY;
     room.walls.push(wall);
     room.wallRevision += 1;
     return validation;
+}
+export function classifyStructuralImpact(from, to, wall) {
+    const horizontalMovement = Math.abs(to.column - from.column) > Math.abs(to.row - from.row);
+    const directlyOpposesMovement = horizontalMovement
+        ? wall.orientation === "vertical"
+        : wall.orientation === "horizontal";
+    return directlyOpposesMovement ? "direct" : "glancing";
+}
+export function getStructuralDamage(balloonType, impact) {
+    if (balloonType === "basic")
+        return BASIC_STRUCTURAL_DAMAGE;
+    if (balloonType === "speed")
+        return SPEED_STRUCTURAL_DAMAGE;
+    return impact === "direct" ? HEAVY_DIRECT_STRUCTURAL_DAMAGE : HEAVY_GLANCING_STRUCTURAL_DAMAGE;
+}
+export function damageWallStructure(room, wallSegmentId, damage) {
+    const wall = room.walls.find((candidate) => candidate.id === wallSegmentId);
+    if (!wall || damage <= 0)
+        return null;
+    const integrityBefore = wall.integrity;
+    wall.integrity = Math.max(0, wall.integrity - damage);
+    if (wall.integrity > 0) {
+        return { wallSegmentId, damage, integrityBefore, integrityAfter: wall.integrity, destruction: null };
+    }
+    const destruction = destroyWallAndCollapse(room, wallSegmentId);
+    return { wallSegmentId, damage, integrityBefore, integrityAfter: 0, destruction };
+}
+export function destroyWallAndCollapse(room, wallSegmentId) {
+    const destroyedWall = room.walls.find((wall) => wall.id === wallSegmentId);
+    if (!destroyedWall)
+        return null;
+    const removedWalls = [{ ...destroyedWall, integrity: 0 }];
+    room.walls = room.walls.filter((wall) => wall.id !== wallSegmentId);
+    while (true) {
+        const unsupported = getUnsupportedHorizontalWalls(room.walls).sort(compareWalls);
+        if (unsupported.length === 0)
+            break;
+        const unsupportedIds = new Set(unsupported.map((wall) => wall.id));
+        removedWalls.push(...unsupported.map((wall) => ({ ...wall })));
+        room.walls = room.walls.filter((wall) => !unsupportedIds.has(wall.id));
+    }
+    const removedWallIds = new Set(removedWalls.map((wall) => wall.id));
+    const removedNailStripIds = room.nailStrips
+        .filter((nail) => removedWallIds.has(nail.wallSegmentId))
+        .map((nail) => nail.id)
+        .sort();
+    const removedGlueIds = room.glueTraps
+        .filter((glue) => removedWallIds.has(glue.wallSegmentId))
+        .map((glue) => glue.id)
+        .sort();
+    room.nailStrips = room.nailStrips.filter((nail) => !removedWallIds.has(nail.wallSegmentId));
+    room.glueTraps = room.glueTraps.filter((glue) => !removedWallIds.has(glue.wallSegmentId));
+    for (const balloon of room.balloons) {
+        balloon.contactingNailIds = balloon.contactingNailIds.filter((id) => !removedNailStripIds.includes(id));
+        balloon.contactingWallIds = balloon.contactingWallIds.filter((id) => !removedWallIds.has(id));
+        balloon.pathRevision = -1;
+    }
+    room.wallRevision += 1;
+    return {
+        destroyedWall: removedWalls[0],
+        collapsedWalls: removedWalls.slice(1),
+        removedNailStripIds,
+        removedGlueIds,
+    };
 }
 export function validateWallRemoval(room, wallId) {
     if (!room.walls.some((wall) => wall.id === wallId))
@@ -91,4 +157,7 @@ export function removeWall(room, wallId) {
     return validation;
 }
 function vertexKey(x, y) { return `${x}:${y}`; }
+function compareWalls(first, second) {
+    return first.gridY - second.gridY || first.gridX - second.gridX || first.orientation.localeCompare(second.orientation) || first.id.localeCompare(second.id);
+}
 //# sourceMappingURL=walls.js.map
